@@ -1,4 +1,3 @@
-# 我要调用哪个 Metasploit 能力？
 # Business API
 # Reference https://docs.rapid7.com/metasploit/standard-api-methods-reference
 

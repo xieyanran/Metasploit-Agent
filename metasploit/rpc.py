@@ -1,5 +1,5 @@
 # https://docs.metasploit.com/docs/using-metasploit/advanced/RPC/how-to-use-metasploit-messagepack-rpc.html
-# I think Python should directly communicate with Metasploit via RPC server.
+# 我要如何与远程服务通信？（连接、认证、发送、接收）
 # Python -> MSF RPC client（rpc.py） -> MSF RPC server -> MSF framework
 # 2026-7-10 version 1.0.0
 
@@ -17,6 +17,7 @@ class MetasploitRPCClient:
         # Runtime parameters
         self.token = None
         self.session = None
+        self.logouttoken = None
 
 
     def login(self):
@@ -31,6 +32,20 @@ class MetasploitRPCClient:
             self.token = response.get("token")
         else:
             raise Exception("Failed to authenticate with Metasploit RPC server: " + str(response))
+    
+    def logout(self):
+        """
+        Remove the specified token from the authentication token list. 
+        """
+        if self.token is None:
+            return
+        if self.logouttoken is None:
+            return
+        response = self._call("auth.logout", self.token, self.logouttoken)
+        if response.get("result") == "success":
+            self.token = None
+        else:
+            raise Exception("Failed to logout from Metasploit RPC server: " + str(response))
     
     def call(self, method: str, *params):
         """
