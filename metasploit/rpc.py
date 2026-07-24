@@ -5,6 +5,7 @@
 
 import requests
 import msgpack
+from metasploit.exceptions import RPCError, RPCConnectionError, RPCTimeoutError, AuthenticationError
 
 class MetasploitRPCClient:
     def __init__(self, host, port, username, password):
@@ -31,7 +32,7 @@ class MetasploitRPCClient:
         if response.get("result") == "success":
             self.token = response.get("token")
         else:
-            raise Exception("Failed to authenticate with Metasploit RPC server: " + str(response))
+            raise AuthenticationError("Failed to authenticate with Metasploit RPC server: " + str(response), self.username)
     
     def logout(self):
         """
@@ -54,8 +55,14 @@ class MetasploitRPCClient:
         """
         if self.token is None:
             self.login()
-    
-        return self._call(method, self.token, *params)
+
+        try:
+            return self._call(method, self.token, *params)
+        
+        except requests.exceptions.ConnectionError as e:
+            raise RPCConnectionError(
+                f"Failed to connect to Metasploit RPC server at {self.host}:{self.port}: {str(e)}", self.host, self.port
+            ) from e
 
     def _call(self, method: str, *params):
         """
@@ -68,14 +75,18 @@ class MetasploitRPCClient:
         url = f'http://{self.host}:{self.port}/api'
         
         request_data = [method, *params]
-        
-        response = self.session.post(
-            url, 
-            data=msgpack.packb(request_data), 
-            headers={'Content-Type': 'application/msgpack'},
-            timeout=10,
+
+        try:
+            response = self.session.post(
+                url, 
+                data=msgpack.packb(request_data), 
+                headers={'Content-Type': 'application/msgpack'},
+                timeout=10,
             )
-        
-        response.raise_for_status()
+
+        except requests.exceptions.Timeout as e:
+            raise RPCTimeoutError(
+                f"RPC request to {self.host}:{self.port} timed out: {str(e)}", method, timeout=10
+            ) from e
 
         return msgpack.unpackb(response.content, raw=False)
