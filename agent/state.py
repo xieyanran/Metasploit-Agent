@@ -1,10 +1,10 @@
 # Agent运行状态（会不断变化）
-# State = Agent 对当前世界(World)的认知 + 当前运行状态(Runtime)
+# 所有组件共享的数据中心
 
 from dataclasses import dataclass, field
 import datetime
 from enum import Enum
-from agent.models import Target, Host, Port, Service, Vulnerability, Task, ToolResult
+from agent.models import Target, Task, ToolResult
 from agent.state import PlanningState, ExecutionState, ModuleState, HistoryState, AgentStatus
 
 @dataclass
@@ -32,7 +32,6 @@ class WorldState:
     """
 
     target: Target
-    hosts: Host
 
 # execute task currently
 @dataclass
@@ -65,4 +64,4 @@ class ToolCall:
 
 @dataclass
 class HistoryState:
-    calls: list[ToolCall] = field(default_factory=list)
+    calls: list[ToolResult] = field(default_factory=list)
