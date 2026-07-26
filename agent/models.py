@@ -201,5 +201,5 @@ class ToolResult:
 
     tool: str
     success: bool
-    output: object = None
+    output: dict = None
     message: str = ""
