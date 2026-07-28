@@ -52,6 +52,7 @@ class PlanningState:
 @dataclass
 class ModuleState:
     module_name: str | None = None
+    module_type: str | None = None
     payload: str | None = None
     options: dict[str, object] = field(default_factory=dict)
     configured: bool = False
