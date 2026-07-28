@@ -54,7 +54,13 @@ class ModulesAPI:
         [ "module.info", "<token>", "<ModuleType>", "<ModuleName>"]
         """
         return self.rpc_client.call("module.info", module_type, module_name)
-    
+
+    def options(self, module_type, module_name) -> dict:
+        """
+        ["module.options", "<token>", "<ModuleType>", "<ModuleName>"]
+        """
+        return self.rpc_client.call("module.options", module_type, module_name)
+
     def compatible_payloads(self, module_name) -> dict:
         """
         Get a list of compatible payloads for a specific module in the Metasploit framework.

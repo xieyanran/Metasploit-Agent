@@ -1,36 +1,35 @@
 """
-Tool for running Metasploit modules
+Agent -> show options (得到模块需要的参数) -> LLM/Planner
+-> set option -> validate -> run module
 """
 from agent.tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
 
-class RunModuleTool(BaseTool):
+class ShowOptionTool(BaseTool):
     """
-    Execute a Metasploit module.
+    对一个特定module的show options命令
     """
-    name = "run_module"
-    description = "Run Metasploit module."
+    name = "show_option"
+    description = "Show Metasploit module options"
 
     def __init__(self, client: MetasploitClient):
         self.client = client
 
     def execute(self, 
-                state: AgentState, 
+                state: AgentState,
                 module_type: str,
                 module_name: str,
-                options: dict,
                 ) -> ToolResult:
-        result = self.client.modules.execute (
+        result = self.client.modules.options (
             module_type = module_type,
             module_name = module_name,
-            options = options,
         )
 
         return ToolResult(
-            tool = f"Metaspolit Module '{module_name}'",
+            tool = f"Metaspolit Module '{module_name}' show options",
             success = True,
             output = result,
-            message = f"Module '{module_name}' executed successfully."
-            )
+            message = f"Module '{module_name}' show options successfully."
+        )
