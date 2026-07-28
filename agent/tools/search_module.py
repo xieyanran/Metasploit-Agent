@@ -15,6 +15,16 @@ class SearchModuleTool(BaseTool):
     def __init__(self, client: MetasploitClient):
        self.client = client
 
-    def execute(self, state: AgentState, keyword: str) -> ToolResult:
-        modules = self.client.modules.
+    def execute(self, 
+                state: AgentState, 
+                query: str,
+                ) -> ToolResult:
+        modules = self.client.modules.search (query = query)
+
+        return ToolResult(
+            tool = f"Search Metaspolit Module",
+            success = True,
+            output = modules,
+            message = f"Keyword searched successfully.",
+        )
         

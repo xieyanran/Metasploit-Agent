@@ -47,6 +47,15 @@ class ModulesAPI:
         [ "module.nops", "<token>"]
         """
         return self.rpc_client.call("module.nops")
+
+    def search(self, query: str) -> dict:
+        """
+        Search Metasploit modules.
+        ["modules.search", "<token>", {"keywords": [query]}]
+        """
+        return self.rpc_client.call("modules.search", {
+            "keywords": [query]
+        })
     
     def info(self, module_type, module_name) -> dict:
         """

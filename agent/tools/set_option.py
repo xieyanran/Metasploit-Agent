@@ -20,7 +20,7 @@ class SetOptionTool(BaseTool):
     def execute(
             self, 
             state: AgentState,
-            options: dict,
+            options: dict, # LLM Reasoning
             ) -> ToolResult:
 
         if state.module.module_name is None:
