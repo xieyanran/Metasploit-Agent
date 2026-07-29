@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 import datetime
 from enum import Enum
-from agent.models import Target, Task, ToolResult
+from agent.models import Target, Task, ToolResult, Session
 from agent.state import PlanningState, ExecutionState, ModuleState, HistoryState, AgentStatus
 
 @dataclass
@@ -37,6 +37,7 @@ class WorldState:
 @dataclass
 class ExecutionState:
     current_task: Task | None = None
+    current_session: Session | None = None
     running: bool = False
     step: int = 0
     last_result: ToolResult | None = None 
