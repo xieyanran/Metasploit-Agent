@@ -17,10 +17,10 @@ class ListSessionTool(BaseTool):
         self.client = client
 
     def execute(self, state: AgentState) -> ToolResult:
-        result = self.client.sessions.list()
+        state.target.sessions = self.client.sessions.list()
         return ToolResult(
             tool = f"Metaspolit Session List",
             success = True,
-            output = result,
+            output = state.target.sessions,
             message = f"Session listed successfully."
         )

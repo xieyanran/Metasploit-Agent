@@ -30,7 +30,6 @@ class WorldState:
     """
     The agent's current understanding of the target environment.
     """
-
     target: Target
 
 # execute task currently
