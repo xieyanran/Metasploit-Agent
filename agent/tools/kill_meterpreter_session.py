@@ -1,17 +1,17 @@
 """
-Tool for killing Sessions
+Tool for killing Meterpreter Sessions
 """
 from agent.tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
 
-class KillSessionTool(BaseTool):
+class KillMeterpreterSessionTool(BaseTool):
     """
-    Killing the Metasploit sessions.
+    Killing the Metasploit Meterpreter sessions.
     """
-    name = "kill_session"
-    description = "Kill Metasploit session"
+    name = "kill_meterpreter_session"
+    description = "Kill Metasploit Meterpreter session"
 
     def __init__(self, client: MetasploitClient):
             self.client = client
