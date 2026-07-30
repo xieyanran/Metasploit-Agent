@@ -32,7 +32,7 @@ class SetSessionTool(BaseTool):
             )
 
         session = sessions[session_id]
-        session_type = sessions.get("type", "")
+        session_type = session.get("type", "")
         state.execution.current_session = session
 
         try:
@@ -55,6 +55,7 @@ class SetSessionTool(BaseTool):
                     message = f"Set session and execute a command successfully."
                 )
             # session_type == protocol-specific
+
             else:
                 return ToolResult(
                     success = False,
