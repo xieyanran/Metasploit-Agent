@@ -28,7 +28,7 @@ class SetOptionTool(BaseTool):
                 tool = "use_module",
                 success = False,
                 output = None,
-                message="No module selected."
+                message = "No module selected."
             )
 
         # validate 

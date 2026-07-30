@@ -27,12 +27,12 @@ class SessionsAPI:
         """
         return self.rpc_client.call('session.shell_read', session_id, read_pointer)
     
-    def write(self, session_id, id) -> dict:
+    def write(self, session_id, command) -> dict:
         """
         Write data to a shell session.
-        [ "session.shell_write", "<token>", "SessionID", "id\n" ]
+        [ "session.shell_write", "<token>", "SessionID", "command\n" ]
         """
-        return self.rpc_client.call('session.shell_write', session_id, id)
+        return self.rpc_client.call('session.shell_write', session_id, command+"\n")
     
     def meterpreter_write(self, session_id, command) -> dict:
         """
