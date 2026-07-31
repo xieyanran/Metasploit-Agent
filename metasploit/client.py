@@ -2,9 +2,9 @@
 # 
 from metasploit.core import CoreAPI
 from metasploit.modules import ModulesAPI
-from metasploit.sessions import SessionsAPI
+from metasploit.session import SessionsAPI
 from metasploit.job import JobAPI
-from metasploit.sessions import SessionsAPI
+from metasploit.session import SessionsAPI
 from metasploit.plugins import PluginsAPI
 from metasploit.console import ConsoleAPI
 from metasploit.rpc import MetasploitRPCClient
