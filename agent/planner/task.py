@@ -15,9 +15,13 @@ class Task:
     """
     Represents one executable task.
     """
+    id: int
+    goal: str
     name: str
     tool: str
     parameters: dict[str, Any] = field(default_factory=dict)
     priority: int = 0
+    dependencies: list[int] = field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
     description: str
+    error: str | None = None
