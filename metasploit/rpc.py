@@ -29,6 +29,8 @@ class MetasploitRPCClient:
             return
         
         response = self._call("auth.login", self.username, self.password)
+        print(type(response))
+        print(response)
         if response.get("result") == "success":
             self.token = response.get("token")
         else:
@@ -80,7 +82,7 @@ class MetasploitRPCClient:
             response = self.session.post(
                 url, 
                 data=msgpack.packb(request_data), 
-                headers={'Content-Type': 'application/msgpack'},
+                headers={'Content-Type': 'binary/message-pack'},
                 timeout=10,
             )
 
@@ -89,4 +91,15 @@ class MetasploitRPCClient:
                 f"RPC request to {self.host}:{self.port} timed out: {str(e)}", method, timeout=10
             ) from e
 
-        return msgpack.unpackb(response.content, raw=False)
+
+        return _decode(msgpack.unpackb(response.content, raw=False))
+
+def _decode(obj):
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8")
+    elif isinstance(obj, dict):
+        return {_decode(k): _decode(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_decode(x) for x in obj]
+    else:
+        return obj
