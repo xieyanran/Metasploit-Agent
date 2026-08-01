@@ -6,6 +6,7 @@
 import requests
 import msgpack
 from metasploit.exceptions import RPCError, RPCConnectionError, RPCTimeoutError, AuthenticationError
+from typing import Any
 
 class MetasploitRPCClient:
     def __init__(self, host, port, username, password):
@@ -29,8 +30,8 @@ class MetasploitRPCClient:
             return
         
         response = self._call("auth.login", self.username, self.password)
-        print(type(response))
-        print(response)
+        # print(type(response))
+        # print(response)
         if response.get("result") == "success":
             self.token = response.get("token")
         else:
@@ -50,7 +51,7 @@ class MetasploitRPCClient:
         else:
             raise Exception("Failed to logout from Metasploit RPC server: " + str(response))
     
-    def call(self, method: str, *params):
+    def call(self, method: str, *params) -> Any:
         """
         Send an authenticated RPC request.
         Injects the authentication token.
@@ -66,7 +67,7 @@ class MetasploitRPCClient:
                 f"Failed to connect to Metasploit RPC server at {self.host}:{self.port}: {str(e)}", self.host, self.port
             ) from e
 
-    def _call(self, method: str, *params):
+    def _call(self, method: str, *params) -> Any:
         """
         Send a MessagePack RPC request to the Metasploit RPC server.
         examples: _post("auth.login", username, password)
@@ -91,8 +92,13 @@ class MetasploitRPCClient:
                 f"RPC request to {self.host}:{self.port} timed out: {str(e)}", method, timeout=10
             ) from e
 
+        result = _decode(msgpack.unpackb(response.content, raw=False))
 
-        return _decode(msgpack.unpackb(response.content, raw=False))
+        # print("!!!!!!!!!!!!")
+        # print(type(result))
+        # print("!!!!!!!!!!!!")
+        # print(result)
+        return result
 
 def _decode(obj):
     if isinstance(obj, bytes):

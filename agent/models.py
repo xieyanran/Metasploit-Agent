@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 #  Target
 #    ├── hosts
@@ -201,5 +202,5 @@ class ToolResult:
 
     tool: str
     success: bool
-    output: dict = None
+    output: Any
     message: str = ""

@@ -16,10 +16,12 @@ class SearchModuleTool(BaseTool):
        self.client = client
 
     def execute(self, 
-                state: AgentState, 
+                state: AgentState,
                 query: str,
                 ) -> ToolResult:
         modules = self.client.modules.search (query = query)
+        # print("\n!!!!!!!!!!")
+        # print("modules:", modules)
 
         return ToolResult(
             tool = f"Search Metaspolit Module",

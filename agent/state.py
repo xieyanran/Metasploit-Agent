@@ -1,14 +1,13 @@
 # Agent运行状态（会不断变化）
 # 所有组件共享的数据中心
-
+# circular import issue
 from dataclasses import dataclass, field
 import datetime
 from enum import Enum
 from agent.models import Target, Task, ToolResult, Session
-from agent.state import PlanningState, ExecutionState, ModuleState, HistoryState, AgentStatus
 from typing import Any
 
-@dataclass
+# 需要进一步理解dataclass
 class AgentStatus(str, Enum):
     IDLE = "idle"
     PLANNING = "planning"
@@ -18,20 +17,12 @@ class AgentStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+# Goal -> Plan -> Task1 -> Task2 -> Task3
 @dataclass
-class AgentState:
-    status: AgentStatus = AgentStatus.IDLE
-    target: Target | None = None
-    planning: PlanningState = field(default_factory=PlanningState)
-    execution: ExecutionState = field(default_factory=ExecutionState)
-    module: ModuleState = field(default_factory=ModuleState)
-    history: HistoryState = field(default_factory=HistoryState)
-@dataclass
-class WorldState:
-    """
-    The agent's current understanding of the target environment.
-    """
-    target: Target
+class PlanningState:
+    goal: str = ""
+    plan: list[Task] = field(default_factory=list)
+    current_index: int = 0
 
 # execute task currently
 @dataclass
@@ -43,13 +34,6 @@ class ExecutionState:
     last_result: ToolResult | None = None 
     error: str | None = None
 
-# Goal -> Plan -> Task1 -> Task2 -> Task3
-@dataclass
-class PlanningState:
-    goal: str = ""
-    plan: list[Task] = field(default_factory=list)
-    current_index: int = 0
-
 @dataclass
 class ModuleState:
     module_name: str | None = None
@@ -58,15 +42,30 @@ class ModuleState:
     options: dict[str, object] = field(default_factory=dict)
     configured: bool = False
 
+@dataclass
+class HistoryState:
+    calls: list[ToolResult] = field(default_factory=list)
+@dataclass
+class AgentState:
+    status: AgentStatus = AgentStatus.IDLE
+    target: Target | None = None
+    planning: PlanningState = field(default_factory=PlanningState)
+    execution: ExecutionState = field(default_factory=ExecutionState)
+    module: ModuleState = field(default_factory=ModuleState)
+    history: HistoryState = field(default_factory=HistoryState)
+
+@dataclass
+class WorldState:
+    """
+    The agent's current understanding of the target environment.
+    """
+    target: Target
+
 class ToolCall:
     tool: str
     arguments: dict
     result: ToolResult
     timestamp: datetime
-
-@dataclass
-class HistoryState:
-    calls: list[ToolResult] = field(default_factory=list)
 
 """
 Observation passed to the Reasoner.
