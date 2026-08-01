@@ -78,6 +78,8 @@ class MetasploitRPCClient:
         url = f'http://{self.host}:{self.port}/api'
         
         request_data = [method, *params]
+        # print("\n!!!!!!!!!!!!")
+        # print(request_data)
 
         try:
             response = self.session.post(
@@ -92,9 +94,9 @@ class MetasploitRPCClient:
                 f"RPC request to {self.host}:{self.port} timed out: {str(e)}", method, timeout=10
             ) from e
 
-        result = _decode(msgpack.unpackb(response.content, raw=False))
+        result = _decode(msgpack.unpackb(response.content, raw=False, strict_map_key=False,))
 
-        # print("!!!!!!!!!!!!")
+        # print("\n!!!!!!!!!!!!")
         # print(type(result))
         # print("!!!!!!!!!!!!")
         # print(result)

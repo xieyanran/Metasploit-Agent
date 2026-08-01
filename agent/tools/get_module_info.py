@@ -25,6 +25,8 @@ class InfoModuleTool(BaseTool):
             module_type = module_type,
             module_name = module_name
         )
+        # print("\n!!!!!!!!!!!!!!!")
+        # print(result)
 
         return ToolResult(
             tool = f"Metaspolit Module '{module_name}'",
