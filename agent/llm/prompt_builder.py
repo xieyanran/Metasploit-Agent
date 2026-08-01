@@ -22,6 +22,7 @@ class PromptBuilder:
         # developer: 遵守哪些规则
 
         # user: currently environment
+        # 当前环境(Context)伪装成一次 User Input
         user = Message(
             role = "user",
             content = str(observation)
