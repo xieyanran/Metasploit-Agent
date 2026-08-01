@@ -100,5 +100,9 @@ class ModulesAPI:
         """
         Execute a specific module with the given options in the Metasploit framework.
         [ "module.execute", "<token>", "<ModuleType>", "<ModuleName>", "<Options>"]
+        client:
+        [ "module.execute", "<token>", "ModuleType", "ModuleName", {"RHOST" => "1.2.3.4", "RPORT" => "80"}]
+        Server:
+        { "job_id" => 1 }
         """
         return self.rpc_client.call("module.execute", module_type, module_name, options)
