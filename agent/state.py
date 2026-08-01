@@ -6,6 +6,7 @@ import datetime
 from enum import Enum
 from agent.models import Target, Task, ToolResult, Session
 from agent.state import PlanningState, ExecutionState, ModuleState, HistoryState, AgentStatus
+from typing import Any
 
 @dataclass
 class AgentStatus(str, Enum):
@@ -66,3 +67,28 @@ class ToolCall:
 @dataclass
 class HistoryState:
     calls: list[ToolResult] = field(default_factory=list)
+
+"""
+Observation passed to the Reasoner.
+- 为什么不直接传 AgentState？
+"""
+@dataclass
+class Observation:
+    """
+    Snapshot of the current environment.
+    This is the only information the Reasoner needs to make decisions.
+    """
+    target: Target | None = None
+    current_task: Task | None = None
+    # 需要加入一个model class吗
+    current_module: str | None = None
+    current_session: Session | None = None
+    last_result: Any | None = None
+    history: list[Any] = field(default_factory=list)
+
+@dataclass
+class Decision:
+    tool: str
+    parameters: dict
+    finish: bool
+    reasoning: str
