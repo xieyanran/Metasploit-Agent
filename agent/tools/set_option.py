@@ -38,7 +38,7 @@ class SetOptionTool(BaseTool):
         )
 
         invalid = [
-            name for name in available_options
+            name for name in options
             if name not in available_options
         ]
 
