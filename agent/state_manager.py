@@ -51,7 +51,7 @@ class StateManager:
             tool=tool,
             arguments=arguments,
             result=result,
-            timestamp=datetime.now(),
+            timestamp=datetime.datetime.now(),
         )
     )
         
