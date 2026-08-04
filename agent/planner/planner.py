@@ -1,5 +1,5 @@
 # 根据
-from agent.planner.task import Task
+from agent.models import Task
 from agent.planner.task_graph import TaskGraph
 from agent.planner.workflow import EXPLOIT_WORKFLOW
 
@@ -13,8 +13,10 @@ class Planner:
         previous = None
         for idx, goal in enumerate(EXPLOIT_WORKFLOW):
             task = Task(
-                id=idx,
-                goal=goal,
+                id = idx,
+                goal = goal,
+                name = goal +"task",
+                description = f"Workflow step: {goal}",
                 dependencies=[] if previous is None else [previous],
             )
             self.graph.add_task(task)
