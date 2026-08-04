@@ -33,7 +33,7 @@ class OpenAILLM(BaseLLM):
 
         return LLMResponse(
             content = response.choices[0].message.content,
-            finish = response.choices[0].finish_reason,
+            finish_reason = response.choices[0].finish_reason,
             model = response.model,
             usage = response.usage.model_dump(),
         )
