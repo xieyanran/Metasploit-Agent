@@ -60,7 +60,7 @@ class WorldState:
     The agent's current understanding of the target environment.
     """
     target: Target
-
+@dataclass
 class ToolCall:
     tool: str
     arguments: dict
