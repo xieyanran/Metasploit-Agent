@@ -12,9 +12,10 @@ class OpenAILLM(BaseLLM):
         self,
         api_key: str,
         model: str = "gpt-5.5",
+        base_url: str | None = None,
     ):
         self.model = model
-        self.client = OpenAI(api_key = api_key)
+        self.client = OpenAI(api_key = api_key, base_url = base_url)
 
     def generate(self, 
                  messages: list[Message],
