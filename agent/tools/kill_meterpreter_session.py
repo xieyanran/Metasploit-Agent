@@ -24,7 +24,7 @@ class KillMeterpreterSessionTool(BaseTool):
         session = state.execution.current_session
         session_type = session.get("type", "")
 
-        if session_type is not "Meterpreter":
+        if session_type != "Meterpreter":
              return ToolResult(
                   tool = f"Meterpreter Session Kill",
                   success = False,
