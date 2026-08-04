@@ -8,3 +8,6 @@ class ToolRegistry:
 
     def get(self, name) -> BaseTool:
         return self._tools.get(name)
+
+    def all(self) -> list[BaseTool]:
+        return list(self._tools.values())
