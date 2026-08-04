@@ -1,7 +1,7 @@
 # planner可能生成一个task的DAG
 # 用于管理任务依赖
 from __future__ import annotations
-from agent.planner.task import Task, TaskStatus
+from agent.models import Task, TaskStatus
 
 class TaskGraph:
     def __init__(self):
@@ -26,7 +26,7 @@ class TaskGraph:
 
     def is_finished(self):
         return all(
-            task.status in (TaskStatus.COMPLETED)
+            task.status == TaskStatus.COMPLETED
             for task in self.tasks.values()
         )
 
