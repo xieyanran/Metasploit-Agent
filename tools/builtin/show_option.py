@@ -2,7 +2,7 @@
 Agent -> show options (得到模块需要的参数) -> LLM/Planner
 -> set option -> validate -> run module
 """
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult

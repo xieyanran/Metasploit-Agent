@@ -1,7 +1,7 @@
 """
 Tool for killing Meterpreter Sessions
 """
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult

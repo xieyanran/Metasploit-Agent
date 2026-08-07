@@ -3,7 +3,7 @@ Tool for setting module options.
 !!! 维护当前 Module 的 options，而不是直接执行 module
 """
 
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult

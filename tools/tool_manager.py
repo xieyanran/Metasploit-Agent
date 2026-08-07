@@ -1,6 +1,6 @@
 from __future__ import annotations
 from agent.models import ToolResult
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 
 class ToolManager:
     def __init__(self) -> None:

@@ -1,4 +1,4 @@
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 class ToolRegistry:
     def __init__(self):
         self._tools = {}

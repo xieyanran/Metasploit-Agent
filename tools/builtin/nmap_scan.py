@@ -5,7 +5,7 @@ to discover open ports and services on a target.
 import re
 import time
 
-from agent.tools.base import BaseTool
+from tools.base import BaseTool
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
