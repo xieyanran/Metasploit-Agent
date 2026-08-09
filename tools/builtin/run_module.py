@@ -15,8 +15,10 @@ class RunModuleTool(BaseTool):
     name = "run_module"
     description = "Run Metasploit module."
 
-    def __init__(self, client: MetasploitClient):
+    def __init__(self, client: MetasploitClient, name: str = "run_module", description: str = "Run Metasploit module."):
         self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [

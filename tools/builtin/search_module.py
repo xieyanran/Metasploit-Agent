@@ -14,8 +14,10 @@ class SearchModuleTool(BaseTool):
     name = "search_module"
     description = "Search Metasploit modules."
 
-    def __init__(self, client: MetasploitClient):
-       self.client = client
+    def __init__(self, client: MetasploitClient, name: str = "search_module", description: str = "Search Metasploit modules."):
+        self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [

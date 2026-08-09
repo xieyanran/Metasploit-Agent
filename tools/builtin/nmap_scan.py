@@ -32,8 +32,10 @@ class NmapScanTool(BaseTool):
     name = "nmap_scan"
     description = "Scan a target with Nmap via Metasploit (db_nmap) to discover open ports and services."
 
-    def __init__(self, client: MetasploitClient):
+    def __init__(self, client: MetasploitClient, name: str = "nmap_scan", description: str = "Scan a target with Nmap via Metasploit (db_nmap) to discover open ports and services."):
         self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [

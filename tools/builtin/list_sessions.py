@@ -15,8 +15,10 @@ class ListSessionTool(BaseTool):
     name = "list_session"
     description = "List Metasploit session"
 
-    def __init__(self, client: MetasploitClient):
+    def __init__(self, client: MetasploitClient, name: str = "list_session", description: str = "List Metasploit session"):
         self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return []

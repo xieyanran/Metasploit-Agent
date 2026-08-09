@@ -13,8 +13,10 @@ class ExecuteSessionTool(BaseTool):
     name = "execute_session"
     description = "set session id and execute command"
 
-    def __init__(self, client: MetasploitClient):
+    def __init__(self, client: MetasploitClient, name: str = "execute_session", description: str = "set session id and execute command"):
         self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [

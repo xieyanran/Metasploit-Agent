@@ -15,8 +15,10 @@ class KillMeterpreterSessionTool(BaseTool):
     name = "kill_meterpreter_session"
     description = "Kill Metasploit Meterpreter session"
 
-    def __init__(self, client: MetasploitClient):
-            self.client = client
+    def __init__(self, client: MetasploitClient, name: str = "kill_meterpreter_session", description: str = "Kill Metasploit Meterpreter session"):
+        self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [

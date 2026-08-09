@@ -16,8 +16,10 @@ class ShowOptionTool(BaseTool):
     name = "show_option"
     description = "Show Metasploit module options"
 
-    def __init__(self, client: MetasploitClient):
+    def __init__(self, client: MetasploitClient, name: str = "show_option", description: str = "Show Metasploit module options"):
         self.client = client
+        self.name = name
+        self.description = description
 
     def get_parameters(self) -> List[ToolParameter]:
         return [
