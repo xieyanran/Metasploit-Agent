@@ -32,18 +32,18 @@ from metasploit.client import MetasploitClient
 
 from agent.state import AgentState
 from agent.models import Target
-from agent.tool_registry import ToolRegistry
+from tools.registry import ToolRegistry
 from agent.langchain_tools import build_langchain_tools
 
-from agent.tools.nmap_scan import NmapScanTool
-from agent.tools.search_module import SearchModuleTool
-from agent.tools.get_module_info import InfoModuleTool
-from agent.tools.show_option import ShowOptionTool
-from agent.tools.set_option import SetOptionTool
-from agent.tools.run_module import RunModuleTool
-from agent.tools.list_sessions import ListSessionTool
-from agent.tools.execute_session import ExecuteSessionTool
-from agent.tools.kill_meterpreter_session import KillMeterpreterSessionTool
+from tools.builtin.nmap_scan import NmapScanTool
+from tools.builtin.search_module import SearchModuleTool
+from tools.builtin.get_module_info import InfoModuleTool
+from tools.builtin.show_option import ShowOptionTool
+from tools.builtin.set_option import SetOptionTool
+from tools.builtin.run_module import RunModuleTool
+from tools.builtin.list_sessions import ListSessionTool
+from tools.builtin.execute_session import ExecuteSessionTool
+from tools.builtin.kill_meterpreter_session import KillMeterpreterSessionTool
 
 SYSTEM_PROMPT = "You are a professional penetration tester."
 
@@ -83,7 +83,7 @@ def build_tool_registry(client: MetasploitClient) -> ToolRegistry:
         ExecuteSessionTool,
         KillMeterpreterSessionTool,
     ):
-        registry.register(tool_cls(client))
+        registry.register_tool(tool_cls(client))
     return registry
 
 
