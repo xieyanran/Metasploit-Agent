@@ -2,7 +2,9 @@
 Tool for setting with Metasploit sessions
 and execute a command.
 """
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -14,7 +16,13 @@ class ExecuteSessionTool(BaseTool):
     def __init__(self, client: MetasploitClient):
         self.client = client
 
-    def execute(self, 
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="session_id", type="integer", description="Target Metasploit session ID."),
+            ToolParameter(name="command", type="string", description="Command to execute in the session."),
+        ]
+
+    def execute(self,
                 state: AgentState, 
                 session_id: int,
                 command: str,

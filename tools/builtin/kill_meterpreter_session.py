@@ -1,7 +1,9 @@
 """
 Tool for killing Meterpreter Sessions
 """
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -16,7 +18,12 @@ class KillMeterpreterSessionTool(BaseTool):
     def __init__(self, client: MetasploitClient):
             self.client = client
 
-    def execute(self, 
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="session_id", type="integer", description="Meterpreter session ID to kill."),
+        ]
+
+    def execute(self,
                 state: AgentState,
                 session_id: int,
                 ) -> ToolResult:

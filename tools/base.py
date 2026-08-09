@@ -6,10 +6,12 @@ Tool基类是整个工具系统的核心抽象，它定义了所有工具必须�
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from agent.state import AgentState
 from agent.models import ToolResult
 from typing import Any, List
 
+@dataclass
 class ToolParameter:
     """
     Represents a parameter required by a tool.

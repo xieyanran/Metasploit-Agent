@@ -1,7 +1,9 @@
 """
 Tool for searching Metasploit modules
 """
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -15,7 +17,12 @@ class SearchModuleTool(BaseTool):
     def __init__(self, client: MetasploitClient):
        self.client = client
 
-    def execute(self, 
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="query", type="string", description="Keyword to search Metasploit modules for."),
+        ]
+
+    def execute(self,
                 state: AgentState,
                 query: str,
                 ) -> ToolResult:

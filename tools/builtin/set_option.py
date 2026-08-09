@@ -3,7 +3,9 @@ Tool for setting module options.
 !!! 维护当前 Module 的 options，而不是直接执行 module
 """
 
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -16,6 +18,11 @@ class SetOptionTool(BaseTool):
 
     def __init__(self, client: MetasploitClient):
         self.client = client
+
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="options", type="object", description="Options to set on the currently selected module, as a dict of option name to value."),
+        ]
 
     def execute(
             self, 

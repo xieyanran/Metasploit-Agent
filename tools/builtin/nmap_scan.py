@@ -5,7 +5,9 @@ to discover open ports and services on a target.
 import re
 import time
 
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -32,6 +34,12 @@ class NmapScanTool(BaseTool):
 
     def __init__(self, client: MetasploitClient):
         self.client = client
+
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="target", type="string", description="Scan target (host or CIDR range)."),
+            ToolParameter(name="options", type="string", description="Nmap options.", required=False, default=_DEFAULT_OPTIONS),
+        ]
 
     def execute(
         self,

@@ -1,7 +1,9 @@
 """
 Tool for running Metasploit modules
 """
-from tools.base import BaseTool
+from typing import List
+
+from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
 from agent.state import AgentState
 from agent.models import ToolResult
@@ -16,7 +18,14 @@ class RunModuleTool(BaseTool):
     def __init__(self, client: MetasploitClient):
         self.client = client
 
-    def execute(self, 
+    def get_parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter(name="module_type", type="string", description="Metasploit module type (e.g. exploit, auxiliary, post)."),
+            ToolParameter(name="module_name", type="string", description="Metasploit module name."),
+            ToolParameter(name="options", type="object", description="Module options as a dict of option name to value."),
+        ]
+
+    def execute(self,
                 state: AgentState, 
                 module_type: str,
                 module_name: str,

@@ -14,16 +14,16 @@ from langchain_core.tools import StructuredTool
 
 from agent.models import ToolResult
 from agent.state import AgentState
-from agent.tools.base import BaseTool
-from agent.tools.execute_session import ExecuteSessionTool
-from agent.tools.get_module_info import InfoModuleTool
-from agent.tools.kill_meterpreter_session import KillMeterpreterSessionTool
-from agent.tools.list_sessions import ListSessionTool
-from agent.tools.nmap_scan import NmapScanTool
-from agent.tools.run_module import RunModuleTool
-from agent.tools.search_module import SearchModuleTool
-from agent.tools.set_option import SetOptionTool
-from agent.tools.show_option import ShowOptionTool
+from tools.base import BaseTool
+from tools.builtin.execute_session import ExecuteSessionTool
+from tools.builtin.get_module_info import InfoModuleTool
+from tools.builtin.kill_meterpreter_session import KillMeterpreterSessionTool
+from tools.builtin.list_sessions import ListSessionTool
+from tools.builtin.nmap_scan import NmapScanTool
+from tools.builtin.run_module import RunModuleTool
+from tools.builtin.search_module import SearchModuleTool
+from tools.builtin.set_option import SetOptionTool
+from tools.builtin.show_option import ShowOptionTool
 
 
 def _json_default(value: Any) -> Any:
