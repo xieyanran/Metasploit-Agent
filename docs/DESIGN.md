@@ -35,6 +35,15 @@ This mirrors how a human pentester actually works — plan first, then adapt in 
 
 ### About the framework
 
+This agent will rely on its own custom-built framework for the time being, rather than adopting an existing commercial one, for the following reasons:
+
+- **Reduced cognitive overhead**. Mature commercial frameworks tend to wrap their functionality in heavy layers of abstraction and expose a large surface of configuration options. Understanding and correctly navigating that surface area imposes a real learning cost on developers.
+
+- **Lower maintenance burden**. Commercial frameworks are typically updated and released frequently. Keeping pace with those changes — and absorbing the breaking changes that often come with them — adds ongoing maintenance overhead that a small, purpose-built codebase avoids.
+
+- **Fewer dependency conflicts**. The extensive set of packages that mature frameworks pull in as dependencies can easily collide with the versions already required by the existing environment.
+
+- **Tighter domain fit**. A custom framework can be tailored precisely to this project's vertical domain — penetration testing — allowing system prompts, safety/security constraints, and resource configurations to be designed specifically around that use case.
 
 ### Instruction template(system_prompt)
 1. personal
@@ -42,11 +51,31 @@ This mirrors how a human pentester actually works — plan first, then adapt in 
 3. Output format
 4. Important Tips
 
+## MetaspolitAgents Architecture
 
 
-
-
-
-
-
-
+hello-agents/
+├── hello_agents/
+│   │
+├── core/                     # 核心框架层
+│   ├── agent.py              # Agent基类
+│   ├── llm.py                # HelloAgentsLLM统一接口
+│   ├── message.py            # 消息系统
+│   ├── config.py             # 配置管理
+│   └── exceptions.py         # 异常体系
+│   
+├── agents/                   # Agent实现层
+│   ├── simple_agent.py       # SimpleAgent实现
+│   │   ├── react_agent.py        # ReActAgent实现
+│   │   ├── reflection_agent.py   # ReflectionAgent实现
+│   │   └── plan_solve_agent.py   # PlanAndSolveAgent实现
+│   │
+│   ├── tools/                    # 工具系统层
+│   │   ├── base.py               # 工具基类
+│   │   ├── registry.py           # 工具注册机制
+│   │   ├── chain.py              # 工具链管理系统
+│   │   ├── async_executor.py     # 异步工具执行器
+│   │   └── builtin/              # 内置工具集
+│   │       ├── calculator.py     # 计算工具
+│   │       └── search.py         # 搜索工具
+└──
