@@ -68,3 +68,78 @@ class ToolRegistry:
             descriptions.append(f"- {name}: {info['description']}")
 
         return "\n".join(descriptions) if descriptions else "暂无可用工具"
+
+    def execute_tool(self, name: str, input_text: str) -> ToolResponse:
+        """
+        执行工具，返回 ToolResponse 对象（带熔断器保护）
+
+        Args:
+            name: 工具名称
+            input_text: 输入参数
+
+        Returns:
+            ToolResponse: 标准化的工具响应对象
+        """
+        response = None
+
+        # 优先查找Tool对象
+        if name in self._tools:
+            tool = self._tools[name]
+            try:
+                # 解析参数（支持 JSON 字符串或字典）
+                import json
+                if isinstance(input_text, str):
+                    try:
+                        parameters = json.loads(input_text)
+                    except json.JSONDecodeError:
+                        # 如果不是 JSON，作为普通字符串处理
+                        parameters = {"input": input_text}
+                elif isinstance(input_text, dict):
+                    parameters = input_text
+                else:
+                    parameters = {"input": str(input_text)}
+
+                # 使用 run_with_timing 自动添加时间统计
+                response = tool.run_with_timing(parameters)
+            except Exception as e:
+                response = ToolResponse.error(
+                    code=ToolErrorCode.EXECUTION_ERROR,
+                    message=f"执行工具 '{name}' 时发生异常: {str(e)}",
+                    context={"tool_name": name, "input": input_text}
+                )
+
+        # 查找函数工具（自动包装为新协议）
+        elif name in self._functions:
+            func = self._functions[name]["func"]
+            start_time = time.time()
+
+            try:
+                result = func(input_text)
+                elapsed_ms = int((time.time() - start_time) * 1000)
+
+                # 包装为 ToolResponse
+                response = ToolResponse.success(
+                    text=str(result),
+                    data={"output": result},
+                    stats={"time_ms": elapsed_ms},
+                    context={"tool_name": name, "input": input_text}
+                )
+            except Exception as e:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                response = ToolResponse.error(
+                    code=ToolErrorCode.EXECUTION_ERROR,
+                    message=f"函数执行失败: {str(e)}",
+                    stats={"time_ms": elapsed_ms},
+                    context={"tool_name": name, "input": input_text}
+                )
+
+        # 工具不存在
+        else:
+            response = ToolResponse.error(
+                code=ToolErrorCode.NOT_FOUND,
+                message=f"未找到名为 '{name}' 的工具",
+                context={"tool_name": name}
+            )
+
+        return response
+    

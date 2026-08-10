@@ -74,6 +74,6 @@ hello-agents/
 │   ├── chain.py              # 工具链管理系统
 │   ├── async_executor.py     # 异步工具执行器
 │   └── builtin/              # 内置工具集
-│   ├── calculator.py     # 计算工具
-│   └── search.py         # 搜索工具
+│       ├── calculator.py     # 计算工具
+│       └── search.py         # 搜索工具
 └──

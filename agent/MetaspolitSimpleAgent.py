@@ -90,9 +90,11 @@ class MetasploitSimpleAgent(SimpleAgent):
 
         while current_iteration < max_tool_iterations:
             # 调用LLM
+            # ① Thought：LLM 先"想"
             response = self.llm.invoke(messages, **kwargs)
 
             # 检查是否有工具调用
+            # ② Action：从文本里抠出 [TOOL_CALL:...] 当作要执行的动作
             tool_calls = self._parse_tool_calls(response)
 
             if not tool_calls:
@@ -103,6 +105,7 @@ class MetasploitSimpleAgent(SimpleAgent):
                 clean_response = response
 
                 for call in tool_calls:
+                    # ③ Observation：真正执行动作，拿到环境反馈
                     result = self._execute_tool_call(call['tool_name'], call['parameters'])
                     tool_results.append(result)
                     # 从响应中移除工具调用标记

@@ -2,6 +2,8 @@ import os
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
+from typing import Optional, Iterator, List, Dict, Union, Any, AsyncIterator
+from .llm_response import LLMResponse, LLMToolResponse
 
 # 加载 .env 文件中的环境变量
 load_dotenv()
@@ -179,6 +181,74 @@ class PentestAgentLLM:
         except Exception as e:
             print(f"❌ 调用LLM API时发生错误: {e}")
             return None
+
+    def invoke(self, messages: List[Dict[str, str]], **kwargs) -> LLMResponse:
+        """
+        非流式调用LLM，返回完整响应对象。
+
+        Args:
+            messages: 消息列表
+            **kwargs: 其他参数（temperature, max_tokens等）
+
+        Returns:
+            LLMResponse: 包含内容、统计信息、推理过程（thinking model）的响应对象
+
+        Example:
+            response = llm.invoke([{"role": "user", "content": "你好"}])
+            print(response.content)  # 回复内容
+            print(response.usage)    # token使用量
+            print(response.latency_ms)  # 耗时
+            if response.reasoning_content:  # thinking model的推理过程
+                print(response.reasoning_content)
+        """
+        # 合并参数
+        call_kwargs = {
+            "temperature": kwargs.pop("temperature", self.temperature),
+        }
+        if self.max_tokens:
+            call_kwargs["max_tokens"] = kwargs.pop("max_tokens", self.max_tokens)
+        call_kwargs.update(kwargs)
+
+        return self._adapter.invoke(messages, **call_kwargs)
+
+    def invoke_with_tools(
+        self,
+        messages: List[Dict],
+        tools: List[Dict],
+        tool_choice: Union[str, Dict] = "auto",
+        **kwargs
+    ) -> LLMToolResponse:
+        """
+        调用 LLM 并支持工具调用（Function Calling）
+
+        这是支持 OpenAI Function Calling 的核心方法，用于结构化工具调用。
+
+        Args:
+            messages: 消息列表，格式为 [{"role": "user", "content": "..."}]
+            tools: 工具 schema 列表，格式为 OpenAI Function Calling 规范
+            tool_choice: 工具选择策略
+                - "auto": 让模型自动决定是否调用工具（默认）
+                - "none": 强制不调用工具
+                - "required": 强制调用工具
+                - {"type": "function", "function": {"name": "tool_name"}}: 强制调用指定工具
+            **kwargs: 其他参数（temperature, max_tokens 等）
+
+        Returns:
+            统一的工具调用响应对象 (LLMToolResponse)
+
+        Raises:
+            HelloAgentsException: 当 LLM 调用失败时
+        """
+        # 合并参数
+        call_kwargs = {
+            "temperature": kwargs.pop("temperature", self.temperature),
+            "tool_choice": tool_choice,
+        }
+        if self.max_tokens:
+            call_kwargs["max_tokens"] = kwargs.pop("max_tokens", self.max_tokens)
+        call_kwargs.update(kwargs)
+
+        return self._adapter.invoke_with_tools(messages, tools, **call_kwargs)
 
 # --- 客户端使用示例 ---
 if __name__ == '__main__':
