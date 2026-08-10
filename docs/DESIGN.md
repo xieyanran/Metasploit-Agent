@@ -52,11 +52,9 @@ This agent will rely on its own custom-built framework for the time being, rathe
 4. Important Tips
 
 ## MetaspolitAgents Architecture
-
-
 hello-agents/
-├── hello_agents/
-│   │
+├── tests/
+│  
 ├── core/                     # 核心框架层
 │   ├── agent.py              # Agent基类
 │   ├── llm.py                # HelloAgentsLLM统一接口
@@ -66,16 +64,16 @@ hello-agents/
 │   
 ├── agents/                   # Agent实现层
 │   ├── simple_agent.py       # SimpleAgent实现
-│   │   ├── react_agent.py        # ReActAgent实现
-│   │   ├── reflection_agent.py   # ReflectionAgent实现
-│   │   └── plan_solve_agent.py   # PlanAndSolveAgent实现
-│   │
-│   ├── tools/                    # 工具系统层
-│   │   ├── base.py               # 工具基类
-│   │   ├── registry.py           # 工具注册机制
-│   │   ├── chain.py              # 工具链管理系统
-│   │   ├── async_executor.py     # 异步工具执行器
-│   │   └── builtin/              # 内置工具集
-│   │       ├── calculator.py     # 计算工具
-│   │       └── search.py         # 搜索工具
+│   ├── react_agent.py        # ReActAgent实现
+│   ├── reflection_agent.py   # ReflectionAgent实现
+│   └── plan_solve_agent.py   # PlanAndSolveAgent实现
+│   
+├── tools/                    # 工具系统层
+│   ├── base.py               # 工具基类
+│   ├── registry.py           # 工具注册机制
+│   ├── chain.py              # 工具链管理系统
+│   ├── async_executor.py     # 异步工具执行器
+│   └── builtin/              # 内置工具集
+│   ├── calculator.py     # 计算工具
+│   └── search.py         # 搜索工具
 └──

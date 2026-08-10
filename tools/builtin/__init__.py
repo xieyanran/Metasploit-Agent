@@ -13,6 +13,13 @@ from tools.builtin.get_module_info import InfoModuleTool
 from tools.builtin.show_option import ShowOptionTool
 from tools.builtin.set_option import SetOptionTool
 from tools.builtin.run_module import RunModuleTool
+from tools.builtin.compatible_payloads import CompatiblePayloadsTool
+from tools.builtin.shell_upgrade import ShellUpgradeTool
+from tools.builtin.session_compatible_modules import SessionCompatibleModulesTool
+from tools.builtin.list_jobs import ListJobsTool
+from tools.builtin.job_info import JobInfoTool
+from tools.builtin.stop_job import StopJobTool
+from tools.builtin.stop_session import StopSessionTool
 
 
 def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient) -> None:
@@ -28,3 +35,10 @@ def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient) -> 
     registry.register_tool(ShowOptionTool(client))
     registry.register_tool(SetOptionTool(client))
     registry.register_tool(RunModuleTool(client))
+    registry.register_tool(CompatiblePayloadsTool(client))
+    registry.register_tool(ShellUpgradeTool(client))
+    registry.register_tool(SessionCompatibleModulesTool(client))
+    registry.register_tool(ListJobsTool(client))
+    registry.register_tool(JobInfoTool(client))
+    registry.register_tool(StopJobTool(client))
+    registry.register_tool(StopSessionTool(client))

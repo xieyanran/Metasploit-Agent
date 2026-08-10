@@ -40,15 +40,24 @@ class SetOptionTool(BaseTool):
                 message = "No module selected."
             )
 
-        # validate 
+        # validate
         available_options = self.client.modules.options(
             state.module.module_type,
             state.module.module_name,
         )
 
+        # 模块自身的 module.options() 只包含 RHOSTS/RPORT 这类 exploit 自己的选项，
+        # 不包含 payload 专属选项（如 LHOST/LPORT）。一旦本次设置了 PAYLOAD（或之前
+        # 已经选定过），需要把该 payload 的 options 一并取出来合并校验，否则
+        # LHOST/LPORT 会被误判为 "未知选项"。
+        payload_name = options.get("PAYLOAD", state.module.payload)
+        if payload_name:
+            payload_options = self.client.modules.options("payload", payload_name)
+            available_options = {**available_options, **payload_options}
+
         invalid = [
             name for name in options
-            if name not in available_options
+            if name != "PAYLOAD" and name not in available_options
         ]
 
         if invalid:
@@ -58,6 +67,9 @@ class SetOptionTool(BaseTool):
                 message = f"Unknown option(s): {', '.join(invalid)}",
                 output = invalid,
             )
+
+        if "PAYLOAD" in options:
+            state.module.payload = options["PAYLOAD"]
 
         state.module.options = options
 
