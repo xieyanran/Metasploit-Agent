@@ -158,29 +158,50 @@ class MetasploitSimpleAgent(SimpleAgent):
             if tool_name == 'execute_session':
                 # ExecuteSession工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'info_module':
+            elif tool_name == 'info_module':
                 # InfoModule工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'kill_meterpreter_session':
+            elif tool_name == 'kill_meterpreter_session':
                 # KillMeterpreterSession工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'list_session':
+            elif tool_name == 'list_session':
                 # ListSession工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'nmap_scan':
+            elif tool_name == 'nmap_scan':
                 # NmapScan工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'run_module':
+            elif tool_name == 'run_module':
                 # RunModule工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'search':
-                # Search工具直接传入表达式
+            elif tool_name == 'search_module':
+                # SearchModule工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'set_option':
+            elif tool_name == 'set_option':
                 # SetOption工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
-            if tool_name == 'show_option':
+            elif tool_name == 'show_option':
                 # ShowOption工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'compatible_payloads':
+                # CompatiblePayloads工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'shell_upgrade':
+                # ShellUpgrade工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'session_compatible_modules':
+                # SessionCompatibleModules工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'list_jobs':
+                # ListJobs工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'job_info':
+                # JobInfo工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'stop_job':
+                # StopJob工具直接传入表达式
+                result = self.tool_registry.execute_tool(tool_name, parameters)
+            elif tool_name == 'stop_session':
+                # StopSession工具直接传入表达式
                 result = self.tool_registry.execute_tool(tool_name, parameters)
             else:
                 # 其他工具使用智能参数解析
