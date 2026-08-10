@@ -3,3 +3,12 @@ requests >= 2.31.0
 msgpack >= 1.0.7
 langchain >= 1.0.0
 langchain-openai >= 0.2.0
+
+# memory/ (ported from HelloAgents hello_agents/memory)
+pydantic >= 2.0.0
+numpy >= 1.24.0
+# optional, only needed if selecting the corresponding storage/embedding backend:
+# neo4j >= 5.0.0
+# qdrant-client >= 1.6.0
+# sentence-transformers
+# dashscope

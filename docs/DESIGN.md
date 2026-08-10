@@ -51,6 +51,17 @@ This agent will rely on its own custom-built framework for the time being, rathe
 3. Output format
 4. Important Tips
 
+### Memory System Design
+- 当前到LLM设计上是无状态的，所以模型可能会因为上下文窗口的限制丢失早期重要信息，Agent无法记住用户的个性需求与偏好，从过往成功与失败的经验的学习能力受限，可能在多轮对话中可能出现不一致的回答，所以我们的框架需要引入记忆系统.
+
+- Working Memory: 扮演“短期记忆”的角色，主要用于储存当前对话的上下文信息，为确保高速访问和响应，其容量被有意限制（例如，默认50条），并且生命周期与单个会话绑定。
+
+- Episodic Memory: 进行“复盘”和学习过往经验的基础。负责存储具体的交互事件与学习经历。并且支持回顾式检索。
+
+- Semantic Memory: 存储的是更为抽象的知识，概念和规则，这部分类型的记忆类型具有高度的持久性。
+
+- Perceptual Memory: 专门处理图像，音频等多模态信息，并支持跨模态检索。其生命周期会进行动态管理。
+
 ## MetaspolitAgents Architecture
 hello-agents/
 ├── tests/
