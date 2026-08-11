@@ -105,8 +105,46 @@ hello-agents/
 > 如何进行去重
 > 如何处理记忆过时的情况
 
-- The Timing: 
-    
+- **The Timing**：提取时机的设计取舍，HelloAgents里是纯靠模型自主判断。
+
+    - **逐轮提取（每轮对话后即时提取）**
+        - 好处：信息新鲜时提取，语义最准确；即使进程崩溃/连接中断也不会丢失关键发现——这点对渗透测试尤其重要，一次渗透可能持续数小时到数天，中途因目标网络波动、RPC超时、agent进程重启而丢失未提取的working memory，可能意味着丢失刚拿到的credential或刚探明的漏洞点
+        - 代价：每轮都调用LLM做分类抽取，成本和延迟显著上升；渗透测试中大量轮次是"侦察噪音"（单次端口扫描的中间输出、多次重试的网络报错），逐轮提取容易产生大量低价值甚至重复的记忆条目，加重去重与一致性维护的负担
+        - 是否适配渗透测试终极目标：部分适配。逐轮提取解决了"长任务不能丢关键发现"的及时性问题，但没解决"哪些轮次值得提取"这个更关键的问题——不加区分地逐轮提取，本质是用成本换安全性，不是最优解
+
+    - **事件触发式（Event-triggered）**——更适合作为episodic memory的主要时机
+        - 触发条件可直接复用下文已定义的Episodic Memory边界：新资产发现、新凭据、exploit尝试出结果（成功/技术性失败/操作性失败）、阴性侦察结果、防御机制被发现、权限提升关键节点等
+        - 好处：既保证"事件发生即写入"的及时性，又天然对齐"什么值得记住"的业务语义边界，减少无意义中间轮次带来的记忆噪音
+        - 实现上可用规则/正则做轻量触发（工具返回中匹配到session established、credential pattern、CVE编号等），再配合一次轻量LLM调用做归类与摘要，而非对每轮都做完整LLM抽取
+
+    - **容量/窗口触发式**（参考MemGPT的分层内存驱逐思路）
+        - 当working memory达到容量上限（默认50条）或临近上下文窗口极限时，强制触发一次"驱逐"式提取——把即将被淘汰的内容筛选、升级为episodic/semantic memory后再丢弃
+        - 这是working memory→episodic/semantic晋升机制里必须存在的兜底时机，否则容量限制本身就会造成信息丢失
+
+    - **重要性阈值触发**（参考Generative Agents的reflection机制）
+        - 给每条working memory打一个"重要性分数"（如利用成功=高、常规扫描回显=低），当近期事件的重要性累计分数超过阈值才触发一次提取/反思，而非逐轮触发
+        - 相比纯规则的事件触发，能捕捉规则未覆盖但语义上重要的信息，代价是需要额外的打分机制
+
+    - **阶段转换触发**（Phase/milestone-triggered）
+        - 与"Current Design"中PTES各阶段划分天然契合：每次从侦察→漏洞分析→利用→后渗透切换阶段时，触发一次批量提取/整理
+        - 好处是节奏可预测、便于复盘；但阶段之间跨度可能长达数小时，若只等阶段结束才提取，阶段内的关键发现仍有中途丢失风险——通常需与事件触发结合使用，不宜单独作为唯一时机
+
+    - **周期性/后台整理式（Consolidation）**——semantic memory的主要来源
+        - 类似人类睡眠时的记忆巩固：定期（如每积累N条episodic memory，或每次engagement结束）异步跑一次归纳，把多条episodic memory中反复出现的规律提炼为semantic memory（例如"某exploit模块在开启ASLR的目标上多次失败" → 归纳为该模块的适用边界）
+        - 语义记忆的定义本身就是"跨多次episodic记忆归纳出的抽象规则"，不可能靠单轮/单事件提取产生，必须是回顾式、批量式的（对应`find_patterns`/`consolidate_memories`）
+
+    - **组合策略建议**：working memory默认全量缓冲、不需要LLM介入；episodic memory以事件触发为主、容量/窗口触发兜底；semantic memory靠周期性后台整理；perceptual memory则应在证据到达时立即处理，因为截图/流量包等原始证据一旦丢弃就无法从working memory中恢复
+
+    - **业界参考**：主流开源pentest agent项目实际用的时机比上面理论列举的更收敛，只组合了其中两三种
+        - **PentAGI**（MIT开源、可自托管）：working context / episodic history / long-term vector store三层，用"chain summarization"在上下文快超限时自动压缩较早历史——即**容量/窗口触发**
+        - **VulnBot**（Planner/Memory Retriever/Generator/Executor/Summarizer五模块）：Summarizer只在PTES阶段切换（侦察→扫描→利用）时工作，摘要关键结论并传递给下一阶段——即**阶段转换触发**，且只做结论摘要，不逐轮处理
+        - **mem0**（当前最主流的通用记忆层，被大量agent项目直接复用）：本质是逐轮提取，但提取过程**异步执行、不阻塞主循环**（`add()`在每轮后调用，LLM抽取/去重/写库在后台跑），且采用**ADD-only**策略（只增不改/不删），避免过早合并导致信息丢失。这是解决"逐轮提取成本太高"问题的关键手段——不是不逐轮，而是把它挪到异步
+
+    - **最终方案（简化为三条规则，避免过度设计）**：
+        1. Working memory：ReAct循环每次工具调用后**自动append**，不经过LLM、不需要agent主动调用memory工具决定要不要记（对应当前`tools/builtin/memory_tool.py`里working也要走`[TOOL_CALL:memory:add=...]`的实现应简化掉这一步）
+        2. Episodic memory：复用已有`_classify_memory_type`的事件规则做轻量触发，命中后**异步**跑一次LLM摘要归档，不阻塞agent下一步动作；ADD-only，不覆盖旧记录——一次失败的exploit尝试和后续成功的尝试都应保留，便于复盘攻击路径的因果链
+        3. Semantic memory：PTES阶段边界触发，对该阶段积累的episodic memory做一次归纳提炼；兜底在engagement结束时再跑一次`consolidate_memories`，不需要额外的重要性打分机制（阶段边界本身就是低成本、天然存在的触发点）
+        - Perceptual memory维持"证据到达即处理"不变
 
 - **记忆类型的储存判断**：涉及memory/manager.py/中def _classify_memory_type的设计
     - 首先，记忆类型的描述:
@@ -139,22 +177,13 @@ hello-agents/
         - 来源不止是单轮对话内容的直接判断，也包括对多条episodic记忆的归纳提炼（对应代码里的`find_patterns`/`consolidate_memories`）
     - Perceptual Memory判断： 截图/流量包/音频等非文本证据，来自其他外部未集成的工具
 
-- **分类判定机制（`memory/manager.py: _classify_memory_type`）**：不再对自由文本做关键词匹配（原来的`_is_episodic_content`/`_is_semantic_content`是照抄HelloAgents的占位实现，命中"昨天/定义"这类关键词，对渗透场景不适用），改为让候选记忆携带结构化字段，分类基于字段直接判定：
-    - 结构化字段：
-        - `is_target_bound: bool` —— 是否绑定具体target/engagement，**episodic vs semantic 的唯一决定性开关**
-        - `target_ref: Optional[str]` —— `is_target_bound=True` 时应提供
-        - `event_type: enum` —— 复用上面 Episodic 8类 / Semantic 8类 判据作为枚举值，仅用于**辅助校验**（与`is_target_bound`矛盾时告警），不参与决定分支，避免两套判据互相打架
-        - `entities: Optional[List[str]]` —— 若已能提取实体，供semantic的"能否拆解为实体关系"约束校验
-    - 判定逻辑：
-        ```
-        def _classify_memory_type(content, metadata) -> str:
-            if metadata.is_target_bound is None:
-                return "working"          # 未提供结构化信号，不强行分类
-            if metadata.is_target_bound:
-                return "episodic"
-            else:
-                if not metadata.entities:
-                    warn("semantic候选无可识别实体，知识图谱部分将退化为纯向量检索")
-                return "semantic"
-        ```
+- **记忆的维护**：
+    - **记忆的Consistency**:
+    - **记忆去重**:
+    - **记忆遗忘/淘汰**:
+        - working memory会有TTL自动过期
+        - working memory会有容量上限淘汰
+
+### Memory Retrievel
+
 
