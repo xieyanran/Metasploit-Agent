@@ -99,31 +99,62 @@ hello-agents/
 ## DeSign Memory System
 
 ### Memory Extraction
-> 什么时候提取出该存的记忆
+> 提取记忆的时机
 > 如何判断哪些对话应该被提取储存为memory,该被储存为哪种类型的memory
 > 如何维护记忆的一致性，如果有记忆冲突如何处理
 > 如何进行去重
 > 如何处理记忆过时的情况
 
 - The Timing: 
+    
 
-- **值不值得记住**：不是所有对话轮次都该产出 memory。渗透场景下，"值得存"通常意味着满足下面几类之一
-    - New assests: 发现主机/端口/服务/版本
-    - New Credentials or 密钥
-    - 漏洞分析与判定
-    - 利用尝试及其结果
-    - 防御措施的发现
-    - 权限提升/横向移动相关的关键节点
-    - Scope：触及到边界
-
-- **记忆类型的储存判断**：
+- **记忆类型的储存判断**：涉及memory/manager.py/中def _classify_memory_type的设计
     - 首先，记忆类型的描述:
-| Memory Type    | Description |
-|--------------|--------------------------------------------------------|
-- Working Memory: 扮演“短期记忆”的角色，主要用于储存当前对话的上下文信息，为确保高速访问和响应，其容量被有意限制（例如，默认50条），并且生命周期与单个会话绑定。
+| Memory Type | Description |
+|---|---|
+| Working Memory | 扮演“短期记忆”的角色，主要用于储存当前对话的上下文信息，为确保高速访问和响应，其容量被有意限制（例如，默认50条），并且生命周期与单个会话绑定。 |
+| Episodic Memory | 进行“复盘”和学习过往经验的基础。负责存储具体的交互事件与学习经历。并且支持回顾式检索。 |
+| Semantic Memory | 存储的是更为抽象的知识，概念和规则，这部分类型的记忆类型具有高度的持久性。 |
+| Perceptual Memory | 专门处理图像，音频等多模态信息，并支持跨模态检索。其生命周期会进行动态管理。 |
 
-- Episodic Memory: 进行“复盘”和学习过往经验的基础。负责存储具体的交互事件与学习经历。并且支持回顾式检索。
+    - Working Memory判断: 默认进入,仅在当前的session中有效，并且在session内部还有TTL/容量边界
+    - 如何将working memory的有效信息升级为Episodic Memory\Semantic Memory, 当然也可以自主创建，参考Pentest agent 论文（PentestAgent/AutoPen/APT-Agent 等）普遍采用"静态知识 vs 动态环境信息"的二分——静态、预训练/沉淀下来的网络安全通用知识（漏洞机理、攻击手法）走长期记忆，动态的、每步产生的观测/推理走短期记忆，且部分系统会把渗透知识按 service/OS/CVE/rank 等结构化属性索引。
+    - Episodic Memory判断：跨session进行记忆，绑定具体的target/session的一次性事件，edg. 
+        - New assests: 发现主机/端口/服务/版本
+        - New Credentials or 密钥 
+        - 利用尝试及其结果（需区分失败原因：技术性失败[漏洞不存在/已修复] vs 操作性失败[网络不通/payload编码错误/RPC超时]，避免把操作性失败误判为"该手法对此环境无效"）
+        - 侦察阶段的阴性结果：端口关闭、服务未匹配任何已知exploit等，避免下次对同一target重复扫描
+        - Target防御措施的发现
+        - 权限提升/横向移动相关的关键节点，及跨资产的因果链条（例如"凭据X取自主机A，被用于登录主机B"，记录攻击路径的依赖关系而非孤立事件）
+        - OSINT/被动情报：子域名、泄露的代码仓库、社工线索等绑定该target的一次性发现
+        - Scope,客户的限制条件（与target强绑定，因此归入Episodic；与target无关、可跨engagement复用的规则/技巧归入Semantic）
+    - Semantic Memory判断：跨session进行记忆，脱离具体的target，更抽象可复用的知识，概念以及规则
+        - 判断标准："换一个目标还有用吗"——内容脱离具体target/session后依然成立，且能拆解为实体+关系（如 CVE↔受影响服务版本、exploit模块↔前置条件、技术↔检测/防御手段），才适合归入Semantic
+        - 漏洞/CVE的技术特征与触发条件
+        - exploit模块的适用边界与失效条件（例如架构要求、在何种防御配置下经常失败）——这类规律通常是从多条episodic失败记录中归纳出来的，而不是单次尝试的直接结论
+        - 漏洞的分析与判定的技巧
+        - 权限提升/横向移动的通用策略
+        - 工具使用的最佳实践与已知坑
+        - 防御规避（EDR/AV/WAF）的通用技巧
+        - 来源不止是单轮对话内容的直接判断，也包括对多条episodic记忆的归纳提炼（对应代码里的`find_patterns`/`consolidate_memories`）
+    - Perceptual Memory判断： 截图/流量包/音频等非文本证据，来自其他外部未集成的工具
 
-- Semantic Memory: 存储的是更为抽象的知识，概念和规则，这部分类型的记忆类型具有高度的持久性。
+- **分类判定机制（`memory/manager.py: _classify_memory_type`）**：不再对自由文本做关键词匹配（原来的`_is_episodic_content`/`_is_semantic_content`是照抄HelloAgents的占位实现，命中"昨天/定义"这类关键词，对渗透场景不适用），改为让候选记忆携带结构化字段，分类基于字段直接判定：
+    - 结构化字段：
+        - `is_target_bound: bool` —— 是否绑定具体target/engagement，**episodic vs semantic 的唯一决定性开关**
+        - `target_ref: Optional[str]` —— `is_target_bound=True` 时应提供
+        - `event_type: enum` —— 复用上面 Episodic 8类 / Semantic 8类 判据作为枚举值，仅用于**辅助校验**（与`is_target_bound`矛盾时告警），不参与决定分支，避免两套判据互相打架
+        - `entities: Optional[List[str]]` —— 若已能提取实体，供semantic的"能否拆解为实体关系"约束校验
+    - 判定逻辑：
+        ```
+        def _classify_memory_type(content, metadata) -> str:
+            if metadata.is_target_bound is None:
+                return "working"          # 未提供结构化信号，不强行分类
+            if metadata.is_target_bound:
+                return "episodic"
+            else:
+                if not metadata.entities:
+                    warn("semantic候选无可识别实体，知识图谱部分将退化为纯向量检索")
+                return "semantic"
+        ```
 
-- Perceptual Memory: 专门处理图像，音频等多模态信息，并支持跨模态检索。其生命周期会进行动态管理。

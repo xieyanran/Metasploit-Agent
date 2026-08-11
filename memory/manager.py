@@ -295,28 +295,48 @@ class MemoryManager:
 
 
 
-    def _classify_memory_type(self, content: str, metadata: Optional[Dict[str, Any]]) -> str:
-        """自动分类记忆类型"""
-        if metadata and metadata.get("type"):
+    # event_type 枚举与 DESIGN.md 中 Episodic/Semantic 判断列表一一对应，
+    # 仅用于与 is_target_bound 做一致性校验，不参与分类分支本身
+    EPISODIC_EVENT_TYPES = {
+        "asset_discovery", "credential_found", "exploit_attempt", "recon_negative",
+        "defense_observed", "privesc_lateral_move", "osint_finding", "scope_directive",
+    }
+    SEMANTIC_EVENT_TYPES = {
+        "vuln_technique_knowledge", "exploit_applicability_knowledge",
+        "vuln_analysis_technique", "privesc_lateral_strategy",
+        "tool_best_practice", "evasion_technique", "pattern_insight",
+    }
+
+    def _classify_memory_type(self, _content: str, metadata: Optional[Dict[str, Any]]) -> str:
+        """基于结构化字段判定记忆类型
+
+        is_target_bound 是 episodic/semantic 的唯一决定性开关；event_type 仅用于
+        与 is_target_bound 做一致性校验（冲突时告警），不参与分支判断。未提供
+        is_target_bound 时不强行分类，归入 working（working 默认全收，无需显式分类）。
+        """
+        metadata = metadata or {}
+
+        if metadata.get("type"):
             return metadata["type"]
-        
-        # 简单的分类逻辑，可以扩展为更复杂的分类器
-        if self._is_episodic_content(content):
-            return "episodic"
-        elif self._is_semantic_content(content):
-            return "semantic"
-        else:
+
+        is_target_bound = metadata.get("is_target_bound")
+        if is_target_bound is None:
             return "working"
-    
-    def _is_episodic_content(self, content: str) -> bool:
-        """判断是否为情景记忆内容"""
-        episodic_keywords = ["昨天", "今天", "明天", "上次", "记得", "发生", "经历"]
-        return any(keyword in content for keyword in episodic_keywords)
-    
-    def _is_semantic_content(self, content: str) -> bool:
-        """判断是否为语义记忆内容"""
-        semantic_keywords = ["定义", "概念", "规则", "知识", "原理", "方法"]
-        return any(keyword in content for keyword in semantic_keywords)
+
+        event_type = metadata.get("event_type")
+        if event_type in self.EPISODIC_EVENT_TYPES and not is_target_bound:
+            logger.warning(f"event_type={event_type} 通常应绑定target，但is_target_bound=False，请检查调用方传参")
+        elif event_type in self.SEMANTIC_EVENT_TYPES and is_target_bound:
+            logger.warning(f"event_type={event_type} 通常与target无关，但is_target_bound=True，请检查调用方传参")
+
+        if is_target_bound:
+            if not metadata.get("target_ref"):
+                logger.warning("is_target_bound=True 但未提供 target_ref，episodic记忆缺少目标绑定")
+            return "episodic"
+
+        if not metadata.get("entities"):
+            logger.warning("semantic候选未提供可识别实体，知识图谱部分将退化为纯向量检索")
+        return "semantic"
     
     def _calculate_importance(self, content: str, metadata: Optional[Dict[str, Any]]) -> float:
         """计算记忆重要性"""

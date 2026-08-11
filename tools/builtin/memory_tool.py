@@ -164,6 +164,8 @@ class MemoryTool(BaseTool):
         metadata = {}
         try:
             # 确保会话ID存在
+            # session到底持续多久，取决于MemoryTool对象活多久
+            # agent 启动时构造一个 MemoryTool 实例（生命周期跟进程绑定），进程退出，session 自然结束
             if self.current_session_id is None:
                 self.current_session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
