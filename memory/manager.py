@@ -1,4 +1,8 @@
-"""记忆管理器 - 记忆核心层的统一管理接口"""
+"""
+记忆管理器 - 记忆核心层的统一管理接口
+MemoryManager负责核心的记忆管理逻辑
+Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/memory/manager.py
+"""
 
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
