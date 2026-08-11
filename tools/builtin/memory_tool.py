@@ -125,8 +125,12 @@ class MemoryTool(BaseTool):
             ),
             ToolParameter(name="content", type="string", description="记忆内容（add/update时可用；感知记忆可作描述）", required=False),
             ToolParameter(name="query", type="string", description="搜索查询（search时可用）", required=False),
-            ToolParameter(name="memory_type", type="string", description="记忆类型：working, episodic, semantic, perceptual（默认：working）", required=False, default="working"),
+            ToolParameter(name="memory_type", type="string", description="仅perceptual需要显式指定；working/episodic/semantic由is_target_bound自动判定，此参数会被忽略（默认：working）", required=False, default="working"),
             ToolParameter(name="importance", type="number", description="重要性分数，0.0-1.0（add/update时可用）", required=False),
+            ToolParameter(name="is_target_bound", type="boolean", description="add时可用：该记忆是否绑定具体渗透target/engagement。True→episodic，False→semantic，不传→working", required=False),
+            ToolParameter(name="target_ref", type="string", description="add时可用：绑定的目标标识（IP/host/engagement_id），is_target_bound=True时应提供", required=False),
+            ToolParameter(name="event_type", type="string", description="add时可用：事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。仅用于与is_target_bound做一致性校验，不决定分类", required=False),
+            ToolParameter(name="entities", type="array", description="add时可用：该记忆涉及的实体列表，如CVE编号、exploit模块名（semantic记忆建议提供，便于构建知识图谱，缺失时图谱部分会退化为纯向量检索）", required=False),
             ToolParameter(name="limit", type="integer", description="搜索结果数量限制（默认：5）", required=False, default=5),
             ToolParameter(name="memory_id", type="string", description="目标记忆ID（update/remove时必需）", required=False),
             ToolParameter(name="file_path", type="string", description="感知记忆：本地文件路径（image/audio）", required=False),
@@ -147,16 +151,24 @@ class MemoryTool(BaseTool):
         memory_type: str = "working",
         importance: float = 0.5,
         file_path: str = None,
-        modality: str = None
+        modality: str = None,
+        is_target_bound: bool = None,
+        target_ref: str = None,
+        event_type: str = None,
+        entities: List[str] = None
     ) -> str:
         """添加记忆
 
         Args:
             content: 记忆内容
-            memory_type: 记忆类型：working(工作记忆), episodic(情景记忆), semantic(语义记忆), perceptual(感知记忆)
+            memory_type: 仅perceptual需要显式指定；working/episodic/semantic由is_target_bound自动判定
             importance: 重要性分数，0.0-1.0
             file_path: 感知记忆：本地文件路径（image/audio）
             modality: 感知记忆模态：text/image/audio（不传则按扩展名推断）
+            is_target_bound: 该记忆是否绑定具体渗透target/engagement，episodic/semantic的判定开关
+            target_ref: 绑定的目标标识（IP/host/engagement_id），is_target_bound=True时应提供
+            event_type: 事件类型标签，仅用于与is_target_bound做一致性校验，不决定分类
+            entities: 该记忆涉及的实体列表（如CVE编号、exploit模块名），semantic记忆建议提供
 
         Returns:
             执行结果
@@ -169,11 +181,23 @@ class MemoryTool(BaseTool):
             if self.current_session_id is None:
                 self.current_session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-            # 感知记忆文件支持：注入 raw_data 与模态
-            if memory_type == "perceptual" and file_path:
-                inferred = modality or self._infer_modality(file_path)
-                metadata.setdefault("modality", inferred)
-                metadata.setdefault("raw_data", file_path)
+            # 感知记忆走独立通道，不受is_target_bound影响，显式覆盖_classify_memory_type的分类结果
+            if memory_type == "perceptual":
+                metadata["type"] = "perceptual"
+                if file_path:
+                    inferred = modality or self._infer_modality(file_path)
+                    metadata.setdefault("modality", inferred)
+                    metadata.setdefault("raw_data", file_path)
+
+            # 结构化分类字段，供 MemoryManager._classify_memory_type 使用
+            if is_target_bound is not None:
+                metadata["is_target_bound"] = is_target_bound
+            if target_ref:
+                metadata["target_ref"] = target_ref
+            if event_type:
+                metadata["event_type"] = event_type
+            if entities:
+                metadata["entities"] = entities
 
             # 添加会话信息到元数据
             # session id的自动管理，确保每个记忆都有明确的会话归属
@@ -187,7 +211,7 @@ class MemoryTool(BaseTool):
                 memory_type=memory_type,
                 importance=importance,
                 metadata=metadata,
-                auto_classify=False  # 禁用自动分类，使用明确指定的类型
+                auto_classify=True
             )
 
             return f"✅ 记忆已添加 (ID: {memory_id[:8]}...)"
