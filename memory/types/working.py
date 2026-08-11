@@ -5,6 +5,8 @@
 - 容量和时间限制
 - 优先级管理
 - 自动清理机制
+
+Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/memory/types/working.py
 """
 
 from typing import List, Dict, Any
@@ -13,6 +15,8 @@ import heapq
 
 from ..base import BaseMemory, MemoryItem, MemoryConfig
 
+# 工作记忆是记忆系统中最活跃的部分，它负责存储当前对话会话中的临时信息。
+# 工作记忆的设计重点在于快速访问和自动清理，这种设计确保了系统的响应速度和资源效率。
 class WorkingMemory(BaseMemory):
     """工作记忆实现
     

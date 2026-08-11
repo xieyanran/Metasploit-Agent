@@ -2,6 +2,7 @@
 
 为HelloAgents框架提供记忆能力的工具实现。
 可以作为工具添加到任何Agent中，让Agent具备记忆功能。
+专注于用户接口和参数处理
 Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/tools/builtin/memory_tool.py
 """
 from typing import Dict, Any, List, Optional
@@ -138,6 +139,7 @@ class MemoryTool(BaseTool):
             ToolParameter(name="importance_threshold", type="number", description="整合重要性阈值（默认0.7）", required=False, default=0.7),
         ]
 
+    # perception information encoding to memory
     @tool_action("memory_add", "添加新记忆到记忆系统中")
     def _add_memory(
         self,
@@ -172,6 +174,7 @@ class MemoryTool(BaseTool):
                 metadata.setdefault("raw_data", file_path)
 
             # 添加会话信息到元数据
+            # session id的自动管理，确保每个记忆都有明确的会话归属
             metadata.update({
                 "session_id": self.current_session_id,
                 "timestamp": datetime.now().isoformat()
@@ -192,6 +195,7 @@ class MemoryTool(BaseTool):
 
     def _infer_modality(self, path: str) -> str:
         """根据扩展名推断模态（默认image/audio/text）"""
+        # 多模态数据的智能处理
         try:
             ext = (path.rsplit('.', 1)[-1] or '').lower()
             if ext in {"png", "jpg", "jpeg", "bmp", "gif", "webp"}:
@@ -202,6 +206,8 @@ class MemoryTool(BaseTool):
         except Exception:
             return "text"
 
+
+    # core function
     @tool_action("memory_search", "搜索相关记忆")
     def _search_memory(
         self,
@@ -225,6 +231,7 @@ class MemoryTool(BaseTool):
             # 处理memory_type参数
             memory_types = [memory_type] if memory_type else None
 
+            # 多类型搜索
             results = self.memory_manager.retrieve_memories(
                 query=query,
                 limit=limit,
@@ -396,6 +403,9 @@ class MemoryTool(BaseTool):
         except Exception as e:
             return f"❌ 删除记忆失败: {str(e)}"
 
+    # 基于重要性forget
+    # 基于时间forget
+    # 基于容量forget
     @tool_action("memory_forget", "按照策略批量遗忘记忆")
     def _forget(self, strategy: str = "importance_based", threshold: float = 0.1, max_age_days: int = 30) -> str:
         """遗忘记忆（支持多种策略）
@@ -418,6 +428,9 @@ class MemoryTool(BaseTool):
         except Exception as e:
             return f"❌ 遗忘记忆失败: {str(e)}"
 
+    # 借鉴了神经科学中的记忆固化概念，将短期记忆转化为长期记忆
+    # 默认：将重要性>0.7的工作记忆转化为情景记忆
+    # 我觉得记忆这方面可以根据渗透测试进行优化
     @tool_action("memory_consolidate", "将重要的短期记忆整合为长期记忆")
     def _consolidate(self, from_type: str = "working", to_type: str = "episodic", importance_threshold: float = 0.7) -> str:
         """整合记忆（将重要的短期记忆提升为长期记忆）

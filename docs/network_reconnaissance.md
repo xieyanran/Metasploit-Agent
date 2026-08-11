@@ -22,4 +22,19 @@
 
 - Social engineering attempts (phishing, vishing, pretexting phone calls)
 
+-  Reconnaissance from Web Browser
+    - Developer Tools
+    - Browser Extensions: Wappalyzer
+
+- Ping
+
+- Traceroute
+
+- Telnet
+
+- Netcat
+
+
+
+
 
