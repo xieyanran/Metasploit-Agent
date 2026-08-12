@@ -45,17 +45,12 @@ This agent will rely on its own custom-built framework for the time being, rathe
 
 - **Tighter domain fit**. A custom framework can be tailored precisely to this project's vertical domain — penetration testing — allowing system prompts, safety/security constraints, and resource configurations to be designed specifically around that use case.
 
-### Instruction template(system_prompt)
-1. personal
-2. Available Tools
-3. Output format
-4. Important Tips
-
 ### Memory System Design
-> Memory System mechanism的必要性：当前到LLM设计上是无状态的，所以模型可能会因为上下文窗口的限制丢失早期重要信息，Agent无法记住用户的个性需求与偏好，从过往成功与失败的经验的学习能力受限，可能在多轮对话中可能出现不一致的回答，所以我们的框架需要引入记忆系统. 
-> 对渗透测试这个垂直场景而言，记忆系统的必要性更加突出：一次真实渗透往往跨越数小时甚至数天、涉及多个目标主机与攻击面，Agent 必须记住已发现的资产、凭据、漏洞点和已尝试过的payload，否则会在**长任务**中重复扫描、重复试错，甚至遗忘关键突破口
-> 同时不同目标环境（防御强度、合规边界、历史成功利用链）差异很大，需要靠情景记忆/语义记忆沉淀"这类环境下哪些手法有效的**经验**，才能让 Agent 在下一次任务中做出更贴合该特定目标的决策，而不是每次都从零推理。
-> 参考了HelloAgents开源项目的记忆系统的设计
+- LLMs are stateless by design, so context-window limits can cause the model to lose early but important information, leave the agent unable to retain user preferences, limit its ability to learn from past successes and failures, and produce inconsistent answers across a multi-turn conversation. A memory system addresses these gaps.
+
+- The need is even more acute for penetration testing: a real engagement can span hours or days across multiple target hosts and attack surfaces, so the agent must retain discovered assets, credentials, vulnerabilities, and previously tried payloads — otherwise **long-running tasks** lead to redundant scans, repeated trial-and-error, and even forgotten breakthroughs.
+
+- Target environments also vary widely (defense posture, compliance boundaries, past successful exploit chains). Episodic/semantic memory is needed to accumulate **experience** — which techniques work in which environments — so the agent can make decisions tailored to a specific target in future engagements instead of reasoning from scratch every time.
 
 ### Retrieval-Augmented Generation Design
 还在未来的拓展开发中
@@ -113,13 +108,13 @@ hello-agents/
 
     - **准确性 vs 延迟**：准确性优先。渗透测试的核心特点是"单次记忆错误的代价很高"——如果检索时把一次失败的 exploit 误判为成功、或漏检了已经探明的凭据，轻则在长任务中重复动作浪费时间，重则触发目标 IDS/IPS 告警、打草惊蛇，甚至导致 engagement 被迫中止。这与强调实时响应的 C 端场景（客服对话、推荐系统）不同：pentest agent 每一步操作本身就有网络 RTT、exploit 执行时间（通常秒级到分钟级）作为基线开销，memory 检索多花的百毫秒到秒级延迟相对可忽略，但错误检索引发的连锁后果代价远高于这点延迟，因此设计上应优先保证召回与排序的准确性，而不是一味追求检索速度。
 
-- 记忆的分类与层次：不同类型的记忆提取，检索策略，存储方式，维护方式不同，该项目参考HelloAgents记忆类型的设计：
+- Memory taxonomy and hierarchy: extraction, retrieval strategy, storage medium, and maintenance policy all differ by memory type:
 | Memory Type | Description |
 |---|---|
-| Working Memory | 扮演“短期记忆”的角色，主要用于储存当前对话的上下文信息，为确保高速访问和响应，其容量被有意限制（例如，默认50条），并且生命周期与单个会话绑定。 |
-| Episodic Memory | 进行“复盘”和学习过往经验的基础。负责存储具体的交互事件与学习经历。并且支持回顾式检索。 |
-| Semantic Memory | 存储的是更为抽象的知识，概念和规则，这部分类型的记忆类型具有高度的持久性。 |
-| Perceptual Memory | 专门处理图像，音频等多模态信息，并支持跨模态检索。其生命周期会进行动态管理。 
+| Working Memory | Functions as short-term memory, holding the context of the current conversation. Its capacity is deliberately capped (e.g., 50 entries by default) to guarantee low-latency access, and its lifecycle is scoped to a single session. |
+| Episodic Memory | Scoped to the current engagement. Records the attempts, actions, and outcomes generated over the course of a penetration test, and is used to reconstruct a roadmap of the full engagement lifecycle so the agent avoids repeating unproductive paths. |
+| Semantic Memory | Designed to emulate the accumulated expertise of a senior pentester: abstract, generalized principles and reusable, transferable experience distilled from episodic records. |
+| Perceptual Memory | Handles multimodal data such as images and audio and supports cross-modal retrieval, with its lifecycle managed dynamically. |
 
 - 完整的生命周期: 提取/写入 -> 组织 -> 检索 -> 维护
 
@@ -147,7 +142,7 @@ hello-agents/
 - **记忆类型的储存判断**：涉及memory/manager.py/中def _classify_memory_type的设计
 
     - Working Memory判断: 默认进入,仅在当前的session中有效，并且在session内部还有TTL/容量边界
-    - 如何将working memory的有效信息升级为Episodic Memory\Semantic Memory, 当然也可以自主创建，参考Pentest agent 论文（PentestAgent/AutoPen/APT-Agent 等）普遍采用"静态知识 vs 动态环境信息"的二分——静态、预训练/沉淀下来的网络安全通用知识（漏洞机理、攻击手法）走长期记忆，动态的、每步产生的观测/推理走短期记忆，且部分系统会把渗透知识按 service/OS/CVE/rank 等结构化属性索引。
+    
     - Episodic Memory判断：跨session进行记忆，绑定具体的target/session的一次性事件，edg. 
         - New assests: 发现主机/端口/服务/版本
         - New Credentials or 密钥 
@@ -219,6 +214,7 @@ hello-agents/
     - 不引入向量库这类重基础设施，是"规模量级决定检索方案"这条原则（见"如何设计"一节）在 working memory 上的直接体现——规模到不了向量检索的门槛，加进来只是白白多一层延迟和维护成本。
 
 - **Episodic Memory 检索策略的思路**
+    - 检索边界: 以engagement_id为边界。
     - 要回答两类性质不同的问题：一类是精确边界问题（"这条记忆是不是这次 engagement / 这台 target 的"），一类是模糊语义问题（"有没有类似情形之前遇到过"）。这两类问题不能靠同一种机制解决——精确边界必须靠结构化字段硬过滤，模糊语义必须靠相似度软召回，思路上要先用 engagement_id/target_ref/phase 圈出安全边界，再在边界内做语义召回，而不是反过来。一旦语义检索把跨 target 的记忆误召回排到前面，就违反了"单用户但需要 engagement 级隔离"这条硬约束（见"如何设计"一节），这不是排序不理想，是信息串错了 target，代价没法靠"检索后降权"弥补，必须在召回阶段就被结构化边界挡住。
     - 排序要同时看重要性和时间，但两者不能合成一个笼统分数：情景记忆记录的是"发生过的事"，越久之前的发现越可能因为 target 环境变化（打了补丁、改了配置）而失效，新近发现天然更可信；但重要性不该被新旧完全取代——刚拿到的 credential 和三个月前拿到但仍然有效的 credential 都很重要，不该只因为时间久远被压到后面。所以"这条记忆有多重要"和"这条记忆有多可能仍然成立"要分开考虑。
     - 语义检索的意义在于覆盖结构化过滤到不了的场景："这个 target 之前是否被扫描过类似的服务"这种问题没有固定字段能精确匹配，只能靠内容相似度召回，这也是"如何设计"一节里提出"值得引入轻量级向量检索方案"的原因。
@@ -234,17 +230,25 @@ hello-agents/
     - 这类记忆是"证据"而非"结论"，排序上除了语义相似度，还要看召回的证据是否仍然新鲜、和当前排查的 target/session 是否对应——时间和归属关系是重要的辅助过滤维度，不能只靠相似度分数。
 
 - 量化指标:
+    - 召回率: 
 
 
 ### Memory Maintence
-- **Memory Consistency**:
-- **记忆去重**:
-- **记忆遗忘/淘汰**: 统一的遗忘机制
-    - 4种遗忘策略：importance_based，time_based，capacity_based，access_based
-    - Working Memory 是唯一"自动触发"的类型：每次写入都会触发time_based forget strategy, capacity_based forget strategy
-    - Episodic Memory 与engagement强绑定，适配于横向移动/权限提升场景（同engagement 内跨多个 target）的因果链，在engagement发生变化后自动清空。
-        - 可能有记忆污染的情况
-- **Memory Consolidate**: 基本只涉及episodic memory consolidate semantic consolidate semantic memory. 将一个阶段的episodic memory summarize to semantic memory. 
+- **Memory Forgetting/Eviction**: a unified forgetting mechanism
+    - Four forgetting strategies: importance-based, time-based, capacity-based, and access-based.
+    - Working Memory is the only type with "automatic" triggering: every write triggers both the time-based and capacity-based forgetting strategies.
+    - Episodic Memory is tightly scoped to the engagement, supporting causal-chain reasoning for lateral-movement/privilege-escalation scenarios (spanning multiple targets within the same engagement). Accordingly, this memory type carries an `engagement_id` retrieval boundary.
+        - This may still be susceptible to memory contamination.
+- **Semantic Memory Maintenance**: Semantic memories are currently generated by summarizing episodic memories — this is where consistency, deduplication, and refinement matter most. The design intent is to emulate the experience-accumulation process of a senior pentester, giving the agent a basis for continuous self-improvement. This is harder to design than the other memory types, and no solution currently seems capable of achieving that goal with full reliability. Periodic LLM-driven passes are needed to refine entries, detect contradictions, enforce consistency, and deduplicate records.
+- **Memory Consolidation**: Essentially limited to consolidating episodic memory into semantic memory — summarizing a batch of episodic records from a given stage into semantic memory. By analogy with the forgetting strategies, an importance-based or access-based consolidation strategy could be designed, but the idea remains somewhat underspecified, so implementation is not yet planned.
+
+## How to deal with the problem?
+记忆污染的风险可能比笔记里写的更值得重视。即使在同一个 engagement_id 边界内，也仍然可能出现跨目标串扰（cross-target bleed）——比如 Target A 上有效的凭据或成功的攻击手法，仅仅因为共享同一个 engagement scope，就被检索出来并错误地套用到 Target B 上；也可能出现信息过期（staleness）的情况——某个漏洞在 engagement 早期被记录为"可利用"，但期间目标可能已打补丁，或 IDS 规则被收紧，而这条过时记录却仍会被当作有效信息反复检索出来。
+
+还有一个更贴合渗透测试场景、值得明确指出的污染途径：由于 episodic memory 是从工具/目标的返回数据中写入的，而目标环境本身是对抗性的，防御方或蜜罐完全可能故意提供误导性的服务 banner、伪造的凭据，或精心构造的响应，这些内容一旦被当作"事实"存下来，就会污染后续的推理——这更接近于"通过工具输出实施的 prompt injection"问题，而不是普通的记忆漂移。建议补充一点：检索/写入时应该以 target_id 为边界进行限定，而不仅仅是 engagement_id；同时，源自未经验证的目标响应的数据，其初始 confidence 应该低于 agent 自行验证过的结果。
+
+关于confidence以及importance
+
     
 
 
