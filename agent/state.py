@@ -53,6 +53,8 @@ class AgentState:
     execution: ExecutionState = field(default_factory=ExecutionState)
     module: ModuleState = field(default_factory=ModuleState)
     history: HistoryState = field(default_factory=HistoryState)
+    # PTES阶段：recon/vuln_analysis/exploitation/post_exploitation，
+    ptes_phase: str = "recon"
 
 @dataclass
 class WorldState:

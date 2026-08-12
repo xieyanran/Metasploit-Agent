@@ -82,12 +82,15 @@ class MemoryManager:
         # 自动分类记忆类型
         if auto_classify:
             memory_type = self._classify_memory_type(content, metadata)
-        
+
+        if metadata:
+            self._validate_common_metadata(metadata)
+
         # 计算重要性
         if importance is None:
             importance = self._calculate_importance(content, metadata)
         
-        # 创建记忆项
+        # 创建记忆项，提取检索时的基本单位
         memory_item = MemoryItem(
             id=str(uuid.uuid4()),
             content=content,
@@ -202,11 +205,11 @@ class MemoryManager:
         max_age_days: int = 30
     ) -> int:
         """记忆遗忘机制
-        
+
         Args:
-            strategy: 遗忘策略 ("importance_based", "time_based", "capacity_based")
-            threshold: 遗忘阈值
-            max_age_days: 最大保存天数
+            strategy: 遗忘策略 ("importance_based", "time_based", "capacity_based", "access_based")
+            threshold: 遗忘阈值（importance_based使用）
+            max_age_days: 最大保存天数（time_based）/ 最长未访问天数（access_based）
             
         Returns:
             遗忘的记忆数量
@@ -220,49 +223,6 @@ class MemoryManager:
 
         logger.info(f"记忆遗忘完成: {total_forgotten} 条记忆")
         return total_forgotten
-
-    def consolidate_memories(
-        self,
-        from_type: str = "working",
-        to_type: str = "episodic",
-        importance_threshold: float = 0.7
-    ) -> int:
-        """记忆整合 - 将重要的短期记忆转换为长期记忆
-
-        Args:
-            from_type: 源记忆类型
-            to_type: 目标记忆类型
-            importance_threshold: 重要性阈值
-
-        Returns:
-            整合的记忆数量
-        """
-        if from_type not in self.memory_types or to_type not in self.memory_types:
-            logger.warning(f"记忆类型不存在: {from_type} -> {to_type}")
-            return 0
-
-        # 获取高重要性的源记忆
-        source_memory = self.memory_types[from_type]
-        target_memory = self.memory_types[to_type]
-
-        # 获取需要整合的记忆
-        all_memories = source_memory.get_all()
-        candidates = [
-            m for m in all_memories
-            if m.importance >= importance_threshold
-        ]
-
-        consolidated_count = 0
-        for memory in candidates:
-            # 移动到目标记忆类型
-            if source_memory.remove(memory.id):
-                memory.memory_type = to_type
-                memory.importance *= 1.1  # 提升重要性
-                target_memory.add(memory)
-                consolidated_count += 1
-
-        logger.info(f"记忆整合完成: {consolidated_count} 条记忆从 {from_type} 转移到 {to_type}")
-        return consolidated_count
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """获取记忆统计信息"""
@@ -306,6 +266,21 @@ class MemoryManager:
         "vuln_analysis_technique", "privesc_lateral_strategy",
         "tool_best_practice", "evasion_technique", "pattern_insight",
     }
+
+    # 通用层字段的合法取值，对应 DESIGN.md 的 MetaData Schema；只做提醒性校验（记日志），
+    # 不阻断写入——调用方传了不认识的值大概率是拼写问题，而不该让整条记忆写入失败
+    VALID_PHASES = {"recon", "vuln_analysis", "exploitation", "post_exploitation"}
+    VALID_OUTCOMES = {"success", "tech_fail", "op_fail", "negative"}
+
+    def _validate_common_metadata(self, metadata: Dict[str, Any]) -> None:
+        """校验 phase/outcome 是否落在 MetaData Schema 约定的枚举内（仅告警）"""
+        phase = metadata.get("phase")
+        if phase is not None and phase not in self.VALID_PHASES:
+            logger.warning(f"phase={phase!r} 不在约定枚举 {self.VALID_PHASES} 内，请检查调用方传参")
+
+        outcome = metadata.get("outcome")
+        if outcome is not None and outcome not in self.VALID_OUTCOMES:
+            logger.warning(f"outcome={outcome!r} 不在约定枚举 {self.VALID_OUTCOMES} 内，请检查调用方传参")
 
     def _classify_memory_type(self, _content: str, metadata: Optional[Dict[str, Any]]) -> str:
         """基于结构化字段判定记忆类型

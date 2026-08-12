@@ -54,7 +54,6 @@ class MemoryTool(BaseTool):
         "update": "_update_memory",
         "remove": "_remove_memory",
         "forget": "_forget",
-        "consolidate": "_consolidate",
         "clear_all": "_clear_all",
     }
 
@@ -80,7 +79,6 @@ class MemoryTool(BaseTool):
         - update: 更新记忆
         - remove: 删除记忆
         - forget: 遗忘记忆（多种策略）
-        - consolidate: 整合记忆（短期→长期）
         - clear_all: 清空所有记忆
         """
         method_name = self._ACTIONS.get(action)
@@ -119,7 +117,7 @@ class MemoryTool(BaseTool):
                 description=(
                     "要执行的操作："
                     "add(添加记忆), search(搜索记忆), summary(获取摘要), stats(获取统计), "
-                    "update(更新记忆), remove(删除记忆), forget(遗忘记忆), consolidate(整合记忆), clear_all(清空所有记忆)"
+                    "update(更新记忆), remove(删除记忆), forget(遗忘记忆), clear_all(清空所有记忆)"
                 ),
                 required=True
             ),
@@ -128,19 +126,22 @@ class MemoryTool(BaseTool):
             ToolParameter(name="memory_type", type="string", description="仅perceptual需要显式指定；working/episodic/semantic由is_target_bound自动判定，此参数会被忽略（默认：working）", required=False, default="working"),
             ToolParameter(name="importance", type="number", description="重要性分数，0.0-1.0（add/update时可用）", required=False),
             ToolParameter(name="is_target_bound", type="boolean", description="add时可用：该记忆是否绑定具体渗透target/engagement。True→episodic，False→semantic，不传→working", required=False),
-            ToolParameter(name="target_ref", type="string", description="add时可用：绑定的目标标识（IP/host/engagement_id），is_target_bound=True时应提供", required=False),
+            ToolParameter(name="engagement_id", type="string", description="add时可用：项目级作用域标识，比target_ref高一层——一次engagement可能涉及多个target（episodic建议提供）", required=False),
+            ToolParameter(name="target_ref", type="string", description="add时可用：资产级标识（IP/host），is_target_bound=True时应提供", required=False),
+            ToolParameter(name="phase", type="string", description="add时可用：所处PTES阶段，recon/vuln_analysis/exploitation/post_exploitation之一，用于按阶段过滤检索", required=False),
             ToolParameter(name="event_type", type="string", description="add时可用：事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。仅用于与is_target_bound做一致性校验，不决定分类", required=False),
+            ToolParameter(name="outcome", type="string", description="add时可用（episodic）：事件结果，success/tech_fail/op_fail/negative之一，用于区分技术性失败与操作性失败", required=False),
+            ToolParameter(name="causal_ref", type="array", description="add时可用（episodic）：该事件依赖/关联的其他episodic记忆ID列表，用于记录攻击路径因果链（如凭据取自主机A被用于登录主机B）", required=False),
             ToolParameter(name="entities", type="array", description="add时可用：该记忆涉及的实体列表，如CVE编号、exploit模块名（semantic记忆建议提供，便于构建知识图谱，缺失时图谱部分会退化为纯向量检索）", required=False),
+            ToolParameter(name="confidence", type="number", description="add时可用（semantic）：该知识的可信度，0.0-1.0，与importance解耦——importance回答多重要，confidence回答多可信", required=False),
+            ToolParameter(name="derived_from", type="array", description="add时可用（semantic）：该知识是从哪些episodic记忆ID归纳得到的，用于溯源", required=False),
             ToolParameter(name="limit", type="integer", description="搜索结果数量限制（默认：5）", required=False, default=5),
             ToolParameter(name="memory_id", type="string", description="目标记忆ID（update/remove时必需）", required=False),
             ToolParameter(name="file_path", type="string", description="感知记忆：本地文件路径（image/audio）", required=False),
             ToolParameter(name="modality", type="string", description="感知记忆模态：text/image/audio（不传则按扩展名推断）", required=False),
-            ToolParameter(name="strategy", type="string", description="遗忘策略：importance_based/time_based/capacity_based（forget时可用）", required=False, default="importance_based"),
+            ToolParameter(name="strategy", type="string", description="遗忘策略：importance_based/time_based/capacity_based/access_based（forget时可用）", required=False, default="importance_based"),
             ToolParameter(name="threshold", type="number", description="遗忘阈值（forget时可用，默认0.1）", required=False, default=0.1),
-            ToolParameter(name="max_age_days", type="integer", description="最大保留天数（forget策略为time_based时可用）", required=False, default=30),
-            ToolParameter(name="from_type", type="string", description="整合来源类型（consolidate时可用，默认working）", required=False, default="working"),
-            ToolParameter(name="to_type", type="string", description="整合目标类型（consolidate时可用，默认episodic）", required=False, default="episodic"),
-            ToolParameter(name="importance_threshold", type="number", description="整合重要性阈值（默认0.7）", required=False, default=0.7),
+            ToolParameter(name="max_age_days", type="integer", description="最大保留天数（time_based）/ 最长未访问天数（access_based）", required=False, default=30),
         ]
 
     # perception information encoding to memory
@@ -153,9 +154,15 @@ class MemoryTool(BaseTool):
         file_path: str = None,
         modality: str = None,
         is_target_bound: bool = None,
+        engagement_id: str = None,
         target_ref: str = None,
+        phase: str = None,
         event_type: str = None,
-        entities: List[str] = None
+        outcome: str = None,
+        causal_ref: List[str] = None,
+        entities: List[str] = None,
+        confidence: float = None,
+        derived_from: List[str] = None
     ) -> str:
         """添加记忆
 
@@ -166,9 +173,15 @@ class MemoryTool(BaseTool):
             file_path: 感知记忆：本地文件路径（image/audio）
             modality: 感知记忆模态：text/image/audio（不传则按扩展名推断）
             is_target_bound: 该记忆是否绑定具体渗透target/engagement，episodic/semantic的判定开关
-            target_ref: 绑定的目标标识（IP/host/engagement_id），is_target_bound=True时应提供
+            engagement_id: 项目级作用域标识，比target_ref高一层（episodic建议提供）
+            target_ref: 资产级标识（IP/host），is_target_bound=True时应提供
+            phase: 所处PTES阶段：recon/vuln_analysis/exploitation/post_exploitation
             event_type: 事件类型标签，仅用于与is_target_bound做一致性校验，不决定分类
+            outcome: 事件结果（episodic）：success/tech_fail/op_fail/negative
+            causal_ref: 该事件依赖/关联的其他episodic记忆ID列表（episodic）
             entities: 该记忆涉及的实体列表（如CVE编号、exploit模块名），semantic记忆建议提供
+            confidence: 该知识的可信度，0.0-1.0（semantic）
+            derived_from: 该知识归纳自哪些episodic记忆ID（semantic）
 
         Returns:
             执行结果
@@ -192,12 +205,24 @@ class MemoryTool(BaseTool):
             # 结构化分类字段，供 MemoryManager._classify_memory_type 使用
             if is_target_bound is not None:
                 metadata["is_target_bound"] = is_target_bound
+            if engagement_id:
+                metadata["engagement_id"] = engagement_id
             if target_ref:
                 metadata["target_ref"] = target_ref
+            if phase:
+                metadata["phase"] = phase
             if event_type:
                 metadata["event_type"] = event_type
+            if outcome:
+                metadata["outcome"] = outcome
+            if causal_ref:
+                metadata["causal_ref"] = causal_ref
             if entities:
                 metadata["entities"] = entities
+            if confidence is not None:
+                metadata["confidence"] = confidence
+            if derived_from:
+                metadata["derived_from"] = derived_from
 
             # 添加会话信息到元数据
             # session id的自动管理，确保每个记忆都有明确的会话归属
@@ -453,31 +478,6 @@ class MemoryTool(BaseTool):
             return f"🧹 已遗忘 {count} 条记忆（策略: {strategy}）"
         except Exception as e:
             return f"❌ 遗忘记忆失败: {str(e)}"
-
-    # 借鉴了神经科学中的记忆固化概念，将短期记忆转化为长期记忆
-    # 默认：将重要性>0.7的工作记忆转化为情景记忆
-    # 我觉得记忆这方面可以根据渗透测试进行优化
-    @tool_action("memory_consolidate", "将重要的短期记忆整合为长期记忆")
-    def _consolidate(self, from_type: str = "working", to_type: str = "episodic", importance_threshold: float = 0.7) -> str:
-        """整合记忆（将重要的短期记忆提升为长期记忆）
-
-        Args:
-            from_type: 来源记忆类型
-            to_type: 目标记忆类型
-            importance_threshold: 整合的重要性阈值
-
-        Returns:
-            执行结果
-        """
-        try:
-            count = self.memory_manager.consolidate_memories(
-                from_type=from_type,
-                to_type=to_type,
-                importance_threshold=importance_threshold,
-            )
-            return f"🔄 已整合 {count} 条记忆为长期记忆（{from_type} → {to_type}，阈值={importance_threshold}）"
-        except Exception as e:
-            return f"❌ 整合记忆失败: {str(e)}"
 
     @tool_action("memory_clear", "清空所有记忆（危险操作，请谨慎使用）")
     def _clear_all(self) -> str:
