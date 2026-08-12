@@ -115,23 +115,26 @@ class MemoryManager:
         memory_types: Optional[List[str]] = None,
         limit: int = 10,
         min_importance: float = 0.0,
-        time_range: Optional[tuple] = None
+        time_range: Optional[tuple] = None,
+        engagement_id: Optional[str] = None
     ) -> List[MemoryItem]:
         """检索记忆
-        
+
         Args:
             query: 查询内容
             memory_types: 要检索的记忆类型列表
             limit: 返回数量限制
             min_importance: 最小重要性阈值
             time_range: 时间范围 (start_time, end_time)
-            
+            engagement_id: 项目级作用域标识，传入时episodic memory只检索该engagement下的记录
+                （semantic等其他类型的retrieve()接受该kwargs但不使用，因为语义知识本就应跨engagement复用）
+
         Returns:
             检索到的记忆列表
         """
         if memory_types is None:
             memory_types = list(self.memory_types.keys())
-        
+
         # 从各个记忆类型中检索
         all_results = []
         per_type_limit = max(1, limit // len(memory_types))
@@ -145,7 +148,8 @@ class MemoryManager:
                         query=query,
                         limit=per_type_limit,
                         min_importance=min_importance,
-                        user_id=self.user_id
+                        user_id=self.user_id,
+                        engagement_id=engagement_id
                     )
                     all_results.extend(type_results)
                 except Exception as e:
@@ -223,6 +227,21 @@ class MemoryManager:
 
         logger.info(f"记忆遗忘完成: {total_forgotten} 条记忆")
         return total_forgotten
+
+    def purge_episodic_by_engagement(self, engagement_id: str) -> int:
+        """按engagement_id硬删除episodic memory（用户显式触发，不在任何自动流程里调用）
+
+        只清空episodic——semantic memory是从episodic归纳出的、脱离具体target/engagement后
+        仍然成立的抽象知识，清掉某个engagement的episodic原始记录不应连带清掉已归纳的经验。
+        """
+        episodic = self.memory_types.get("episodic")
+        if episodic is None or not hasattr(episodic, "clear_by_engagement"):
+            logger.warning("episodic记忆类型未启用，无法按engagement清空")
+            return 0
+
+        purged = episodic.clear_by_engagement(engagement_id)
+        logger.info(f"engagement清空完成: engagement_id={engagement_id}, 共删除 {purged} 条episodic记忆")
+        return purged
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """获取记忆统计信息"""

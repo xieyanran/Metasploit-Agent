@@ -55,6 +55,7 @@ class MemoryTool(BaseTool):
         "remove": "_remove_memory",
         "forget": "_forget",
         "clear_all": "_clear_all",
+        "purge_engagement": "_purge_engagement",
     }
 
     def execute(self,
@@ -80,6 +81,7 @@ class MemoryTool(BaseTool):
         - remove: 删除记忆
         - forget: 遗忘记忆（多种策略）
         - clear_all: 清空所有记忆
+        - purge_engagement: 按engagement_id硬删除该engagement下的episodic记忆（用户显式触发，不会自动执行）
         """
         method_name = self._ACTIONS.get(action)
         if method_name is None:
@@ -117,7 +119,8 @@ class MemoryTool(BaseTool):
                 description=(
                     "要执行的操作："
                     "add(添加记忆), search(搜索记忆), summary(获取摘要), stats(获取统计), "
-                    "update(更新记忆), remove(删除记忆), forget(遗忘记忆), clear_all(清空所有记忆)"
+                    "update(更新记忆), remove(删除记忆), forget(遗忘记忆), clear_all(清空所有记忆), "
+                    "purge_engagement(按engagement_id硬删除该engagement下的episodic记忆，需用户显式触发)"
                 ),
                 required=True
             ),
@@ -126,7 +129,7 @@ class MemoryTool(BaseTool):
             ToolParameter(name="memory_type", type="string", description="仅perceptual需要显式指定；working/episodic/semantic由is_target_bound自动判定，此参数会被忽略（默认：working）", required=False, default="working"),
             ToolParameter(name="importance", type="number", description="重要性分数，0.0-1.0（add/update时可用）", required=False),
             ToolParameter(name="is_target_bound", type="boolean", description="add时可用：该记忆是否绑定具体渗透target/engagement。True→episodic，False→semantic，不传→working", required=False),
-            ToolParameter(name="engagement_id", type="string", description="add时可用：项目级作用域标识，比target_ref高一层——一次engagement可能涉及多个target（episodic建议提供）", required=False),
+            ToolParameter(name="engagement_id", type="string", description="项目级作用域标识，比target_ref高一层——一次engagement可能涉及多个target。add时可用（episodic建议提供）；search时可用（传入后episodic memory只检索该engagement下的记录）；purge_engagement时必需（指定要硬删除哪个engagement的episodic记忆）", required=False),
             ToolParameter(name="target_ref", type="string", description="add时可用：资产级标识（IP/host），is_target_bound=True时应提供", required=False),
             ToolParameter(name="phase", type="string", description="add时可用：所处PTES阶段，recon/vuln_analysis/exploitation/post_exploitation之一，用于按阶段过滤检索", required=False),
             ToolParameter(name="event_type", type="string", description="add时可用：事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。仅用于与is_target_bound做一致性校验，不决定分类", required=False),
@@ -270,7 +273,8 @@ class MemoryTool(BaseTool):
         query: str,
         limit: int = 5,
         memory_type: str = None,
-        min_importance: float = 0.1
+        min_importance: float = 0.1,
+        engagement_id: str = None
     ) -> str:
         """搜索记忆
 
@@ -279,6 +283,8 @@ class MemoryTool(BaseTool):
             limit: 搜索结果数量限制
             memory_type: 限定记忆类型：working/episodic/semantic/perceptual
             min_importance: 最低重要性阈值
+            engagement_id: 传入时episodic memory只检索该engagement下的记录，
+                避免跨engagement的记忆互相串扰（semantic不受此限制，语义知识本就应跨engagement复用）
 
         Returns:
             搜索结果
@@ -292,7 +298,8 @@ class MemoryTool(BaseTool):
                 query=query,
                 limit=limit,
                 memory_types=memory_types,
-                min_importance=min_importance
+                min_importance=min_importance,
+                engagement_id=engagement_id
             )
 
             if not results:
@@ -496,3 +503,24 @@ class MemoryTool(BaseTool):
             return "🧽 已清空所有记忆"
         except Exception as e:
             return f"❌ 清空记忆失败: {str(e)}"
+
+    @tool_action("memory_purge_engagement", "按engagement_id硬删除该engagement下的episodic记忆（危险操作，需用户显式触发，不会自动执行）")
+    def _purge_engagement(self, engagement_id: str = "") -> str:
+        """按engagement_id清空episodic记忆
+
+        只清空episodic——semantic memory是从episodic归纳出的、脱离具体target/engagement后
+        仍然成立的抽象知识，不会被这个操作连带清掉。
+
+        Args:
+            engagement_id: 要清空的engagement标识（必需）
+
+        Returns:
+            执行结果
+        """
+        if not engagement_id:
+            return "❌ purge_engagement需要提供engagement_id"
+        try:
+            count = self.memory_manager.purge_episodic_by_engagement(engagement_id)
+            return f"🧹 已清空 engagement_id={engagement_id} 下的 {count} 条episodic记忆"
+        except Exception as e:
+            return f"❌ 按engagement清空记忆失败: {str(e)}"

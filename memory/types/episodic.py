@@ -179,6 +179,7 @@ class EpisodicMemory(BaseMemory):
         """检索情景记忆（结构化过滤 + 语义向量检索）"""
         user_id = kwargs.get("user_id")
         session_id = kwargs.get("session_id")
+        engagement_id = kwargs.get("engagement_id")
         time_range: Optional[Tuple[datetime, datetime]] = kwargs.get("time_range")
         importance_threshold: Optional[float] = kwargs.get("importance_threshold")
 
@@ -232,6 +233,8 @@ class EpisodicMemory(BaseMemory):
             doc = self.doc_store.get_memory(mem_id)
             if not doc:
                 continue
+            if engagement_id and doc.get("properties", {}).get("engagement_id") != engagement_id:
+                continue
 
             # 计算综合分数：向量0.6 + 近因0.2 + 重要性0.2
             vec_score = float(hit.get("score", 0.0))
@@ -271,7 +274,7 @@ class EpisodicMemory(BaseMemory):
         if not results:
             fallback = super()._generate_id  # 占位以避免未使用警告
             query_lower = query.lower()
-            for ep in self._filter_episodes(user_id, session_id, time_range):
+            for ep in self._filter_episodes(user_id, session_id, time_range, engagement_id):
                 if query_lower in ep.content.lower():
                     recency_score = 1.0 / (1.0 + max(0.0, (now_ts - int(ep.timestamp.timestamp())) / 86400.0))
                     # 回退匹配：新评分算法
@@ -412,6 +415,26 @@ class EpisodicMemory(BaseMemory):
                 self.vector_store.delete_memories(ids)
         except Exception:
             pass
+
+    def clear_by_engagement(self, engagement_id: str) -> int:
+        """按engagement_id硬删除该engagement下的episodic记忆（用户显式触发，不自动执行）
+
+        直接以SQLite权威库为准扫描，而不是仅遍历内存缓存self.episodes——
+        避免跨进程重启后内存缓存为空、导致本该删除的历史记录被漏删。
+        """
+        docs = self.doc_store.search_memories(memory_type="episodic", limit=10000)
+        ids = [
+            d["memory_id"] for d in docs
+            if (d.get("properties") or {}).get("engagement_id") == engagement_id
+        ]
+
+        removed_count = 0
+        for memory_id in ids:
+            if self.remove(memory_id):
+                removed_count += 1
+
+        logger.info(f"engagement清空完成: engagement_id={engagement_id}, 删除 {removed_count} 条episodic记忆")
+        return removed_count
 
     def forget(self, strategy: str = "importance_based", threshold: float = 0.1, max_age_days: int = 30) -> int:
         """情景记忆遗忘机制（硬删除）"""
@@ -585,7 +608,8 @@ class EpisodicMemory(BaseMemory):
         self,
         user_id: str = None,
         session_id: str = None,
-        time_range: Tuple[datetime, datetime] = None
+        time_range: Tuple[datetime, datetime] = None,
+        engagement_id: str = None
     ) -> List[Episode]:
         """过滤情景"""
         filtered = self.episodes
@@ -595,6 +619,9 @@ class EpisodicMemory(BaseMemory):
 
         if session_id:
             filtered = [e for e in filtered if e.session_id == session_id]
+
+        if engagement_id:
+            filtered = [e for e in filtered if e.metadata.get("engagement_id") == engagement_id]
 
         if time_range:
             start_time, end_time = time_range
