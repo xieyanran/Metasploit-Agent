@@ -131,6 +131,7 @@ class MemoryTool(BaseTool):
             ToolParameter(name="phase", type="string", description="add时可用：所处PTES阶段，recon/vuln_analysis/exploitation/post_exploitation之一，用于按阶段过滤检索", required=False),
             ToolParameter(name="event_type", type="string", description="add时可用：事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。仅用于与is_target_bound做一致性校验，不决定分类", required=False),
             ToolParameter(name="outcome", type="string", description="add时可用（episodic）：事件结果，success/tech_fail/op_fail/negative之一，用于区分技术性失败与操作性失败", required=False),
+            ToolParameter(name="context", type="object", description="add时可用（episodic）：不适合归入结构化字段的自由补充信息，例如原始命令行、完整报文片段等排查用细节；不参与分类/过滤，只作为附加信息存储", required=False),
             ToolParameter(name="causal_ref", type="array", description="add时可用（episodic）：该事件依赖/关联的其他episodic记忆ID列表，用于记录攻击路径因果链（如凭据取自主机A被用于登录主机B）", required=False),
             ToolParameter(name="entities", type="array", description="add时可用：该记忆涉及的实体列表，如CVE编号、exploit模块名（semantic记忆建议提供，便于构建知识图谱，缺失时图谱部分会退化为纯向量检索）", required=False),
             ToolParameter(name="confidence", type="number", description="add时可用（semantic）：该知识的可信度，0.0-1.0，与importance解耦——importance回答多重要，confidence回答多可信", required=False),
@@ -159,6 +160,7 @@ class MemoryTool(BaseTool):
         phase: str = None,
         event_type: str = None,
         outcome: str = None,
+        context: Dict[str, Any] = None,
         causal_ref: List[str] = None,
         entities: List[str] = None,
         confidence: float = None,
@@ -178,6 +180,7 @@ class MemoryTool(BaseTool):
             phase: 所处PTES阶段：recon/vuln_analysis/exploitation/post_exploitation
             event_type: 事件类型标签，仅用于与is_target_bound做一致性校验，不决定分类
             outcome: 事件结果（episodic）：success/tech_fail/op_fail/negative
+            context: 不适合归入结构化字段的自由补充信息（episodic），不参与分类/过滤
             causal_ref: 该事件依赖/关联的其他episodic记忆ID列表（episodic）
             entities: 该记忆涉及的实体列表（如CVE编号、exploit模块名），semantic记忆建议提供
             confidence: 该知识的可信度，0.0-1.0（semantic）
@@ -215,6 +218,8 @@ class MemoryTool(BaseTool):
                 metadata["event_type"] = event_type
             if outcome:
                 metadata["outcome"] = outcome
+            if context:
+                metadata["context"] = context
             if causal_ref:
                 metadata["causal_ref"] = causal_ref
             if entities:

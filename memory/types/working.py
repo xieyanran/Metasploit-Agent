@@ -150,7 +150,15 @@ class WorkingMemory(BaseMemory):
 
         # 按分数排序并返回
         scored_memories.sort(key=lambda x: x[0], reverse=True)
-        return [memory for _, memory in scored_memories[:limit]]
+        final = [memory for _, memory in scored_memories[:limit]]
+
+        # 内存对象原地改字段，成本可忽略；主要用于working->episodic/semantic晋升时
+        # 判断这条working memory是否被反复检索过（比单看importance更能反映真实价值）
+        now_ts = int(datetime.now().timestamp())
+        for memory in final:
+            memory.metadata["last_accessed_at"] = now_ts
+
+        return final
     
     def update(
         self,

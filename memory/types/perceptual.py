@@ -181,8 +181,7 @@ class PerceptualMemory(BaseMemory):
             properties={
                 "perception_id": perception.perception_id,
                 "modality": modality,
-                "context": memory_item.metadata.get("context", {}),
-                "tags": memory_item.metadata.get("tags", []),
+                "raw_data": memory_item.metadata.get("raw_data", raw_data)
             }
         )
 

@@ -247,15 +247,15 @@ class SQLiteDocumentStore(DocumentStore):
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, user_id, content, memory_type, timestamp, importance, properties, created_at
+            SELECT id, user_id, content, memory_type, timestamp, importance, properties, created_at, updated_at
             FROM memories
             WHERE id = ?
         """, (memory_id,))
-        
+
         row = cursor.fetchone()
         if not row:
             return None
-        
+
         return {
             "memory_id": row["id"],
             "user_id": row["user_id"],
@@ -264,7 +264,8 @@ class SQLiteDocumentStore(DocumentStore):
             "timestamp": row["timestamp"],
             "importance": row["importance"],
             "properties": json.loads(row["properties"]) if row["properties"] else {},
-            "created_at": row["created_at"]
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"]
         }
     
     def search_memories(
@@ -309,13 +310,13 @@ class SQLiteDocumentStore(DocumentStore):
             where_clause = "WHERE " + " AND ".join(where_conditions)
         
         cursor.execute(f"""
-            SELECT id, user_id, content, memory_type, timestamp, importance, properties, created_at
+            SELECT id, user_id, content, memory_type, timestamp, importance, properties, created_at, updated_at
             FROM memories
             {where_clause}
             ORDER BY importance DESC, timestamp DESC
             LIMIT ?
         """, params + [limit])
-        
+
         memories = []
         for row in cursor.fetchall():
             memories.append({
@@ -326,7 +327,8 @@ class SQLiteDocumentStore(DocumentStore):
                 "timestamp": row["timestamp"],
                 "importance": row["importance"],
                 "properties": json.loads(row["properties"]) if row["properties"] else {},
-                "created_at": row["created_at"]
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"]
             })
         
         return memories

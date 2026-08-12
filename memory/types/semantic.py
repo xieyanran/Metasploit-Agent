@@ -233,18 +233,27 @@ class SemanticMemory(BaseMemory):
                 self._add_relation_to_graph(relation, memory_item)
             
             # 4. 存储到Qdrant向量数据库
+            # confidence/derived_from 是MetaData Schema里semantic特有的字段：confidence回答
+            # "这条知识有多可信"（与importance"有多重要"解耦）；derived_from溯源到归纳出它的
+            # episodic记忆ID。两者都必须显式写进Qdrant payload，否则retrieve()重建MemoryItem
+            # 时（只读Qdrant返回的metadata，不读memory_item.metadata）会丢失这两个字段。
             metadata = {
                 "memory_id": memory_item.id,
                 "user_id": memory_item.user_id,
                 "content": memory_item.content,
                 "memory_type": memory_item.memory_type,
                 "timestamp": int(memory_item.timestamp.timestamp()),
+                "updated_at": int(memory_item.timestamp.timestamp()),
                 "importance": memory_item.importance,
                 "entities": [e.entity_id for e in entities],
                 "entity_count": len(entities),
                 "relation_count": len(relations)
             }
-            
+            if memory_item.metadata.get("confidence") is not None:
+                metadata["confidence"] = memory_item.metadata["confidence"]
+            if memory_item.metadata.get("derived_from"):
+                metadata["derived_from"] = memory_item.metadata["derived_from"]
+
             success = self.vector_store.add_vectors(
                 vectors=[embedding.tolist()],
                 metadata=[metadata],
@@ -297,16 +306,10 @@ class SemanticMemory(BaseMemory):
             else:
                 probs = []
             
-            # 4. 过滤已遗忘记忆并转换为MemoryItem
+            # 4. 转换为MemoryItem
             result_memories = []
+            raw_by_id = {}  # memory_id -> 原始flatten payload，供last_accessed_at回写时保留其余字段
             for idx, result in enumerate(combined_results):
-                memory_id = result.get("memory_id")
-                
-                # 检查是否已遗忘
-                memory = next((m for m in self.semantic_memories if m.id == memory_id), None)
-                if memory and memory.metadata.get("forgotten", False):
-                    continue  # 跳过已遗忘的记忆
-                
                 # 处理时间戳
                 timestamp = result.get("timestamp")
                 if isinstance(timestamp, str):
@@ -318,8 +321,11 @@ class SemanticMemory(BaseMemory):
                     timestamp = datetime.fromtimestamp(timestamp)
                 else:
                     timestamp = datetime.now()
-                
+
                 # 直接从结果数据构建MemoryItem（附带分数与概率）
+                # 注意：result本身就是flatten后的Qdrant payload（_vector_search把metadata展开到顶层），
+                # 之前写成 result.get("metadata", {}) 永远拿到空dict，entities/confidence/derived_from/
+                # updated_at 等字段会在这里悄悄丢失，因此改为直接从 result 顶层取。
                 memory_item = MemoryItem(
                     id=result["memory_id"],
                     content=result["content"],
@@ -328,7 +334,12 @@ class SemanticMemory(BaseMemory):
                     timestamp=timestamp,
                     importance=result.get("importance", 0.5),
                     metadata={
-                        **result.get("metadata", {}),
+                        "entities": result.get("entities", []),
+                        "entity_count": result.get("entity_count", 0),
+                        "relation_count": result.get("relation_count", 0),
+                        "confidence": result.get("confidence"),
+                        "derived_from": result.get("derived_from", []),
+                        "updated_at": result.get("updated_at"),
                         "combined_score": result.get("combined_score", 0.0),
                         "vector_score": result.get("vector_score", 0.0),
                         "graph_score": result.get("graph_score", 0.0),
@@ -336,10 +347,21 @@ class SemanticMemory(BaseMemory):
                     }
                 )
                 result_memories.append(memory_item)
-            
-            logger.info(f"✅ 检索到 {len(result_memories)} 条相关记忆")
-            return result_memories[:limit]
-                
+                raw_by_id[memory_item.id] = result
+
+            final = result_memories[:limit]
+
+            # 刷新命中记忆的 last_accessed_at——只碰真正返回的 top-N；把完整原始payload
+            # 传进去合并覆盖，因为Qdrant的upsert是整点替换而非merge，只传局部字段会把
+            # entities/confidence/derived_from等其余字段静默冲掉
+            now_ts = int(datetime.now().timestamp())
+            for item in final:
+                self._touch_last_accessed(item.id, now_ts, raw_by_id.get(item.id, {}))
+                item.metadata["last_accessed_at"] = now_ts
+
+            logger.info(f"✅ 检索到 {len(final)} 条相关记忆")
+            return final
+
         except Exception as e:
             logger.error(f"❌ 检索语义记忆失败: {e}")
             return []
@@ -872,6 +894,36 @@ class SemanticMemory(BaseMemory):
     
     # 旧的图相关性计算方法已被 _calculate_graph_relevance_neo4j 替代
     
+    def _touch_last_accessed(self, memory_id: str, now_ts: int, raw_payload: Dict[str, Any]) -> None:
+        """检索命中时刷新 last_accessed_at（in-memory MemoryItem + Qdrant payload upsert）
+
+        Qdrant的add_vectors是整点替换（不是merge），必须把raw_payload（本次检索已经拿到的
+        完整payload）原样带上再覆盖last_accessed_at，否则entities/confidence/derived_from
+        等字段会被一次"只想更新访问时间"的操作静默清空。
+        """
+        memory = self._find_memory_by_id(memory_id)
+        if memory is not None:
+            memory.metadata["last_accessed_at"] = now_ts
+
+        embedding = self.memory_embeddings.get(memory_id)
+        if embedding is None or not raw_payload:
+            return  # 进程重启后嵌入缓存/payload缺失，跳过（best-effort，不影响主检索路径）
+        try:
+            # 剔除检索时临时算出的分数字段，只保留原本就该持久化的payload
+            payload = {
+                k: v for k, v in raw_payload.items()
+                if k not in ("score", "similarity", "vector_score", "graph_score",
+                             "combined_score", "debug_info", "content_hash")
+            }
+            payload["last_accessed_at"] = now_ts
+            self.vector_store.add_vectors(
+                vectors=[embedding.tolist() if hasattr(embedding, "tolist") else embedding],
+                metadata=[payload],
+                ids=[memory_id]
+            )
+        except Exception:
+            pass
+
     def _find_memory_by_id(self, memory_id: str) -> Optional[MemoryItem]:
         """根据ID查找记忆"""
         logger.debug(f"🔍 查找记忆ID: {memory_id}, 当前记忆数: {len(self.semantic_memories)}")
@@ -923,12 +975,12 @@ class SemanticMemory(BaseMemory):
                 
             if importance is not None:
                 memory.importance = importance
-            
+
             if metadata is not None:
                 memory.metadata.update(metadata)
-                
-                return True
-            
+
+            return True
+
         except Exception as e:
             logger.error(f"❌ 更新记忆失败: {e}")
         return False
@@ -951,9 +1003,9 @@ class SemanticMemory(BaseMemory):
             self.semantic_memories.remove(memory)
             if memory_id in self.memory_embeddings:
                 del self.memory_embeddings[memory_id]
-                
-                return True
-            
+
+            return True
+
         except Exception as e:
             logger.error(f"❌ 删除记忆失败: {e}")
         return False
@@ -986,6 +1038,13 @@ class SemanticMemory(BaseMemory):
                 # 基于时间遗忘
                 cutoff_time = current_time - timedelta(days=max_age_days)
                 if memory.timestamp < cutoff_time:
+                    should_forget = True
+            elif strategy == "access_based":
+                # 基于访问频率遗忘（LRU）：从未被检索命中过的记忆，退回用创建时间判断
+                cutoff_time = current_time - timedelta(days=max_age_days)
+                last_accessed = memory.metadata.get("last_accessed_at")
+                reference_time = datetime.fromtimestamp(last_accessed) if last_accessed else memory.timestamp
+                if reference_time < cutoff_time:
                     should_forget = True
             elif strategy == "capacity_based":
                 # 基于容量遗忘（保留最重要的）

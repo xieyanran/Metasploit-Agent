@@ -55,7 +55,6 @@ This agent will rely on its own custom-built framework for the time being, rathe
 > Memory System mechanism的必要性：当前到LLM设计上是无状态的，所以模型可能会因为上下文窗口的限制丢失早期重要信息，Agent无法记住用户的个性需求与偏好，从过往成功与失败的经验的学习能力受限，可能在多轮对话中可能出现不一致的回答，所以我们的框架需要引入记忆系统. 
 > 对渗透测试这个垂直场景而言，记忆系统的必要性更加突出：一次真实渗透往往跨越数小时甚至数天、涉及多个目标主机与攻击面，Agent 必须记住已发现的资产、凭据、漏洞点和已尝试过的payload，否则会在**长任务**中重复扫描、重复试错，甚至遗忘关键突破口
 > 同时不同目标环境（防御强度、合规边界、历史成功利用链）差异很大，需要靠情景记忆/语义记忆沉淀"这类环境下哪些手法有效的**经验**，才能让 Agent 在下一次任务中做出更贴合该特定目标的决策，而不是每次都从零推理。
-> 我们根据认知心理学的研究进行设计，人类的记忆分为感知记忆，工作记忆，以及长期记忆。
 > 参考了HelloAgents开源项目的记忆系统的设计
 
 ### Retrieval-Augmented Generation Design
@@ -134,15 +133,15 @@ hello-agents/
 
 - **The Timing**：提取时机的设计取舍，HelloAgents里是纯靠模型自主判断。
 
-    - **业界参考**：主流开源pentest agent项目实际用的时机比上面理论列举的更收敛，只组合了其中两三种
-        - **PentAGI**（MIT开源、可自托管）：working context / episodic history / long-term vector store三层，用"chain summarization"在上下文快超限时自动压缩较早历史——即**容量/窗口触发**
+    - **业界参考**：主流开源pentest agent项目实际用的时机类型选择是非常收敛的。
+        - **PentAGI**：working context / episodic history / long-term vector store三层，用"chain summarization"在上下文快超限时自动压缩较早历史——即**容量/窗口触发**
         - **VulnBot**（Planner/Memory Retriever/Generator/Executor/Summarizer五模块）：Summarizer只在PTES阶段切换（侦察→扫描→利用）时工作，摘要关键结论并传递给下一阶段——即**阶段转换触发**，且只做结论摘要，不逐轮处理
         - **mem0**（当前最主流的通用记忆层，被大量agent项目直接复用）：本质是逐轮提取，但提取过程**异步执行、不阻塞主循环**（`add()`在每轮后调用，LLM抽取/去重/写库在后台跑），且采用**ADD-only**策略（只增不改/不删），避免过早合并导致信息丢失。这是解决"逐轮提取成本太高"问题的关键手段——不是不逐轮，而是把它挪到异步
 
-    - **最终方案**：
+    - **方案**：
         1. Working memory：自动直写入内存，不经过LLM
         2. Episodic memory：每轮对话后触发，提交给LLM，做是否是Episodic Memory的判断。ADD-only，不覆盖旧记录——一次失败的exploit尝试和后续成功的尝试都应保留，便于复盘攻击路径的因果链。更经济的做法是，单独训练一个较小的模型用于此处，一开始是想做Event-triggered timing,并且利用正则表达式判断每个事件，但其分类准确性过于僵硬。
-        3. Semantic memory：PTES阶段边界触发，对该阶段积累的episodic memory做一次归纳提炼；兜底在engagement结束时再做一次归纳提炼，不需要额外的重要性打分机制（阶段边界本身就是低成本、天然存在的触发点）
+        3. Semantic memory：PTES阶段边界触发，对该阶段积累的episodic memory做一次归纳提炼；兜底在engagement结束时再做一次归纳提炼，不需要额外的重要性打分机制（阶段边界本身就是低成本、天然存在的触发点）。参考主流开源项目VulnBot。
         4. Perceptual memory维持"证据到达即处理"不变
 
 - **记忆类型的储存判断**：涉及memory/manager.py/中def _classify_memory_type的设计
@@ -207,11 +206,6 @@ hello-agents/
     - **Perceptual 特有**：
         - `modality` / `raw_data`：已有，保留
 
-    - **建议从现有代码精简掉的字段**（`episodic.py` 里已存在但检索/评分逻辑从未使用，是从 HelloAgents 通用对话场景继承来的遗留字段，不贴合单用户 pentest 场景）：
-        - `participants`：单用户场景不存在"多参与者"概念
-        - `context`（自由 dict）：语义模糊，容易变成万能垃圾桶，用更明确的 `engagement_id`/`phase`/`causal_ref` 替代
-        - `tags`（自由标签）：容易和 `event_type`/`entities` 两套分类体系重叠打架
-
 - 更新语义: 追加式还是覆盖式，覆盖式简单省空间，但丢失历史、无法回溯、出错难排查；追加式（保留旧版本，标记为已取代）可审计、可回滚，但需要额外的版本管理和空间成本。
 
 - 记忆分层: 将记忆按照之前的分类，分成不同的存储区，每个区独立配置检索，维护等策略。
@@ -243,14 +237,15 @@ hello-agents/
 
 
 ### Memory Maintence
-- **记忆的Consistency**:
+- **Memory Consistency**:
 - **记忆去重**:
 - **记忆遗忘/淘汰**: 统一的遗忘机制
-> follow了Hello Agents的设计基础
-    - importance_based
-    - time_based
-    - capacity_based
-    - access_based
+    - 4种遗忘策略：importance_based，time_based，capacity_based，access_based
+    - Working Memory 是唯一"自动触发"的类型：每次写入都会触发time_based forget strategy, capacity_based forget strategy
+    - Episodic Memory 与engagement强绑定，适配于横向移动/权限提升场景（同engagement 内跨多个 target）的因果链，在engagement发生变化后自动清空。
+        - 可能有记忆污染的情况
+- **Memory Consolidate**: 基本只涉及episodic memory consolidate semantic consolidate semantic memory. 将一个阶段的episodic memory summarize to semantic memory. 
+    
 
 
 
