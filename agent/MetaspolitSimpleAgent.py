@@ -4,6 +4,7 @@ from core.message import Message
 from core.config import Config
 from core.llm import PentestAgentLLM
 from agent.simple_agent import SimpleAgent
+from agent.state import AgentState
 from tools.registry import ToolRegistry
 import re
 
@@ -24,6 +25,9 @@ class MetasploitSimpleAgent(SimpleAgent):
         super().__init__(name, llm, system_prompt, config)
         self.tool_registry = tool_registry
         self.enable_tool_calling = enable_tool_calling and tool_registry is not None
+        # 贯穿整个engagement的运行状态（已发现资产、当前session、已配置的module等），
+        # 需要在多次工具调用之间持久化，而不是每次调用临时创建
+        self.state = AgentState()
         print(f"✅ {name} 初始化完成，工具调用: {'启用' if self.enable_tool_calling else '禁用'}")
 
     def run(self, input_text: str, max_tool_iterations: int = 3, **kwargs) -> str:
@@ -97,7 +101,7 @@ class MetasploitSimpleAgent(SimpleAgent):
             # ② Action：从文本里抠出 [TOOL_CALL:...] 当作要执行的动作
             tool_calls = self._parse_tool_calls(response)
 
-            if not tool_calls:
+            if tool_calls:
                 print(f"🔧 检测到 {len(tool_calls)} 个工具调用")
                 # 执行所有工具调用并收集结果
 
@@ -156,68 +160,51 @@ class MetasploitSimpleAgent(SimpleAgent):
         if not self.tool_registry:
             return f"❌ 错误:未配置工具注册表"
 
+        output = self._run_tool_call(tool_name, parameters)
+        # Working memory自动直写：每次Action的Observation都无条件记录，
+        # 不需要等LLM主动决定要不要调用memory工具（对应DESIGN.md的working memory时机设计）
+        self._auto_log_working_memory(tool_name, parameters, output)
+        return output
+
+    def _run_tool_call(self, tool_name: str, parameters: str) -> str:
+        """实际执行工具调用，返回格式化后的结果/错误文本
+
+        统一走 ToolRegistry.execute_tool(name, state, **kwargs) -> ToolResult，
+        所有内置Metasploit工具与其他工具共用同一条路径，不再逐个工具名特判。
+        """
         try:
-            # 智能参数解析
-            if tool_name == 'execute_session':
-                # ExecuteSession工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'info_module':
-                # InfoModule工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'kill_meterpreter_session':
-                # KillMeterpreterSession工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'list_session':
-                # ListSession工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'nmap_scan':
-                # NmapScan工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'run_module':
-                # RunModule工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'search_module':
-                # SearchModule工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'set_option':
-                # SetOption工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'show_option':
-                # ShowOption工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'compatible_payloads':
-                # CompatiblePayloads工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'shell_upgrade':
-                # ShellUpgrade工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'session_compatible_modules':
-                # SessionCompatibleModules工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'list_jobs':
-                # ListJobs工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'job_info':
-                # JobInfo工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'stop_job':
-                # StopJob工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            elif tool_name == 'stop_session':
-                # StopSession工具直接传入表达式
-                result = self.tool_registry.execute_tool(tool_name, parameters)
-            else:
-                # 其他工具使用智能参数解析
-                param_dict = self._parse_tool_parameters(tool_name, parameters)
-                tool = self.tool_registry.get_tool(tool_name)
-                if not tool:
-                    return f"❌ 错误:未找到工具 '{tool_name}'"
-                result = tool.run(param_dict)
-
-            return f"🔧 工具 {tool_name} 执行结果:\n{result}"
-
+            param_dict = self._parse_tool_parameters(tool_name, parameters)
+            result = self.tool_registry.execute_tool(tool_name, self.state, **param_dict)
         except Exception as e:
             return f"❌ 工具调用失败:{str(e)}"
+
+        if result.success:
+            return f"🔧 工具 {tool_name} 执行结果:\n{result.output}"
+        return f"❌ 工具调用失败:{result.message or result.output}"
+
+    def _auto_log_working_memory(self, tool_name: str, parameters: str, result: str) -> None:
+        """把每次工具调用的Action+Observation自动写入working memory
+
+        无需LLM判断"要不要记"，只是原始缓冲；working memory自身的容量/TTL
+        会负责淘汰，真正的筛选发生在working->episodic/semantic的晋升阶段。
+        """
+        if tool_name == "memory" or not self.tool_registry:
+            return
+
+        memory_tool = self.tool_registry.get_tool("memory")
+        if memory_tool is None:
+            return
+
+        try:
+            content = f"[{tool_name}] params={parameters} -> {result[:2000]}"
+            memory_tool.memory_manager.add_memory(
+                content=content,
+                memory_type="working",
+                auto_classify=False,
+                metadata={"tool": tool_name, "parameters": parameters, "auto_logged": True},
+            )
+        except Exception as e:
+            print(f"⚠️ working memory自动写入失败（不影响工具执行）: {e}")
 
     def _parse_tool_parameters(self, tool_name: str, parameters: str) -> dict:
         """智能解析工具参数"""

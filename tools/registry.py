@@ -1,5 +1,8 @@
 from tools.base import BaseTool
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
+from agent.state import AgentState
+from agent.models import ToolResult
+# Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/tools/registry.py
 class ToolRegistry:
     """
     HelloAgents工具注册表
@@ -50,6 +53,16 @@ class ToolRegistry:
         else:
             print(f"⚠️ 工具 '{name}' 不存在。")
 
+    # 对外查询接口
+    def get_tool(self, name: str) -> Optional[BaseTool]:
+        """获取工具函数"""
+        return self._tools.get(name)
+
+    def get_function(self, name: str) -> Optional[Callable]:
+        """获取工具函数"""
+        func_info = self._functions.get(name)
+        return func_info["func"] if func_info else None
+
     def get_tools_description(self) -> str:
         """
         获取所有可用工具的格式化描述字符串
@@ -69,77 +82,51 @@ class ToolRegistry:
 
         return "\n".join(descriptions) if descriptions else "暂无可用工具"
 
-    def execute_tool(self, name: str, input_text: str) -> ToolResponse:
+    def execute_tool(self, name: str, state: Optional[AgentState] = None, **kwargs) -> ToolResult:
         """
-        执行工具，返回 ToolResponse 对象（带熔断器保护）
+        执行工具
 
         Args:
             name: 工具名称
-            input_text: 输入参数
+            state: 当前Agent运行状态
+            **kwargs: 工具所需的具体参数
 
         Returns:
-            ToolResponse: 标准化的工具响应对象
+            ToolResult: 标准化的工具执行结果
         """
-        response = None
-
         # 优先查找Tool对象
         if name in self._tools:
             tool = self._tools[name]
             try:
-                # 解析参数（支持 JSON 字符串或字典）
-                import json
-                if isinstance(input_text, str):
-                    try:
-                        parameters = json.loads(input_text)
-                    except json.JSONDecodeError:
-                        # 如果不是 JSON，作为普通字符串处理
-                        parameters = {"input": input_text}
-                elif isinstance(input_text, dict):
-                    parameters = input_text
-                else:
-                    parameters = {"input": str(input_text)}
-
-                # 使用 run_with_timing 自动添加时间统计
-                response = tool.run_with_timing(parameters)
+                return tool.execute(state, **kwargs)
             except Exception as e:
-                response = ToolResponse.error(
-                    code=ToolErrorCode.EXECUTION_ERROR,
+                return ToolResult(
+                    tool=name,
+                    success=False,
+                    output=None,
                     message=f"执行工具 '{name}' 时发生异常: {str(e)}",
-                    context={"tool_name": name, "input": input_text}
                 )
 
-        # 查找函数工具（自动包装为新协议）
-        elif name in self._functions:
+        # 查找函数工具（简便注册方式，只接受单个字符串输入）
+        if name in self._functions:
             func = self._functions[name]["func"]
-            start_time = time.time()
-
+            input_text = kwargs.get("input", "")
             try:
                 result = func(input_text)
-                elapsed_ms = int((time.time() - start_time) * 1000)
-
-                # 包装为 ToolResponse
-                response = ToolResponse.success(
-                    text=str(result),
-                    data={"output": result},
-                    stats={"time_ms": elapsed_ms},
-                    context={"tool_name": name, "input": input_text}
-                )
+                return ToolResult(tool=name, success=True, output=result)
             except Exception as e:
-                elapsed_ms = int((time.time() - start_time) * 1000)
-                response = ToolResponse.error(
-                    code=ToolErrorCode.EXECUTION_ERROR,
+                return ToolResult(
+                    tool=name,
+                    success=False,
+                    output=None,
                     message=f"函数执行失败: {str(e)}",
-                    stats={"time_ms": elapsed_ms},
-                    context={"tool_name": name, "input": input_text}
                 )
 
         # 工具不存在
-        else:
-            response = ToolResponse.error(
-                code=ToolErrorCode.NOT_FOUND,
-                message=f"未找到名为 '{name}' 的工具",
-                context={"tool_name": name}
-            )
-
-        return response
+        return ToolResult(
+            tool=name,
+            success=False,
+            output=None,
+            message=f"未找到名为 '{name}' 的工具",
+        )
     

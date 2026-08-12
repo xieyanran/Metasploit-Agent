@@ -98,6 +98,17 @@ hello-agents/
 
 ## DeSign Memory System
 
+### how to design the Memory System?
+> 澄清场景，记忆分类，明确记忆的完整生命周期，trade-off以及失败处理
+
+- 强依赖场景：面向单用户还是多用户（涉及隔离和权限）？记忆需要跨会话还是只在单会话内？信息的更新频率如何，是偏静态的用户画像还是高频变化的任务状态？规模量级多大，是几百条还是千万级（决定要不要上向量库）？对准确性和延迟的要求哪个优先？
+    - 渗透测试场景
+    - 面向单用户
+    - 记忆需要跨会话
+    - 对准确性要求更优先
+
+
+
 ### Memory Extraction
 > 提取记忆的时机
 > 如何判断哪些对话应该被提取储存为memory,该被储存为哪种类型的memory
@@ -133,18 +144,16 @@ hello-agents/
         - 类似人类睡眠时的记忆巩固：定期（如每积累N条episodic memory，或每次engagement结束）异步跑一次归纳，把多条episodic memory中反复出现的规律提炼为semantic memory（例如"某exploit模块在开启ASLR的目标上多次失败" → 归纳为该模块的适用边界）
         - 语义记忆的定义本身就是"跨多次episodic记忆归纳出的抽象规则"，不可能靠单轮/单事件提取产生，必须是回顾式、批量式的（对应`find_patterns`/`consolidate_memories`）
 
-    - **组合策略建议**：working memory默认全量缓冲、不需要LLM介入；episodic memory以事件触发为主、容量/窗口触发兜底；semantic memory靠周期性后台整理；perceptual memory则应在证据到达时立即处理，因为截图/流量包等原始证据一旦丢弃就无法从working memory中恢复
-
     - **业界参考**：主流开源pentest agent项目实际用的时机比上面理论列举的更收敛，只组合了其中两三种
         - **PentAGI**（MIT开源、可自托管）：working context / episodic history / long-term vector store三层，用"chain summarization"在上下文快超限时自动压缩较早历史——即**容量/窗口触发**
         - **VulnBot**（Planner/Memory Retriever/Generator/Executor/Summarizer五模块）：Summarizer只在PTES阶段切换（侦察→扫描→利用）时工作，摘要关键结论并传递给下一阶段——即**阶段转换触发**，且只做结论摘要，不逐轮处理
         - **mem0**（当前最主流的通用记忆层，被大量agent项目直接复用）：本质是逐轮提取，但提取过程**异步执行、不阻塞主循环**（`add()`在每轮后调用，LLM抽取/去重/写库在后台跑），且采用**ADD-only**策略（只增不改/不删），避免过早合并导致信息丢失。这是解决"逐轮提取成本太高"问题的关键手段——不是不逐轮，而是把它挪到异步
 
-    - **最终方案（简化为三条规则，避免过度设计）**：
-        1. Working memory：ReAct循环每次工具调用后**自动append**，不经过LLM、不需要agent主动调用memory工具决定要不要记（对应当前`tools/builtin/memory_tool.py`里working也要走`[TOOL_CALL:memory:add=...]`的实现应简化掉这一步）
+    - **最终方案**：
+        1. Working memory：自动直写，不经过LLM，也不需要等agent主动调用memory工具
         2. Episodic memory：复用已有`_classify_memory_type`的事件规则做轻量触发，命中后**异步**跑一次LLM摘要归档，不阻塞agent下一步动作；ADD-only，不覆盖旧记录——一次失败的exploit尝试和后续成功的尝试都应保留，便于复盘攻击路径的因果链
         3. Semantic memory：PTES阶段边界触发，对该阶段积累的episodic memory做一次归纳提炼；兜底在engagement结束时再跑一次`consolidate_memories`，不需要额外的重要性打分机制（阶段边界本身就是低成本、天然存在的触发点）
-        - Perceptual memory维持"证据到达即处理"不变
+        4. Perceptual memory维持"证据到达即处理"不变
 
 - **记忆类型的储存判断**：涉及memory/manager.py/中def _classify_memory_type的设计
     - 首先，记忆类型的描述:

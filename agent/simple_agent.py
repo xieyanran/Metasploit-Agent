@@ -7,15 +7,15 @@ Reference: https://github.com/jjyaoao/HelloAgents/blob/main/hello_agents/agents/
 from typing import Optional, Iterator, TYPE_CHECKING, List, Dict, Any, AsyncGenerator
 import json
 
-from ..core.agent import Agent
-from ..core.llm import PentestAgentLLM
-from ..core.config import Config
-from ..core.message import Message
-from ..core.streaming import StreamEvent, StreamEventType
-from ..core.lifecycle import LifecycleHook
+from core.agent import Agent
+from core.llm import PentestAgentLLM
+from core.config import Config
+from core.message import Message
+from core.streaming import StreamEvent, StreamEventType
+from core.lifecycle import LifecycleHook
 
 if TYPE_CHECKING:
-    from ..tools.registry import ToolRegistry
+    from tools.registry import ToolRegistry
 
 class SimpleAgent(Agent):
     """简单的对话Agent，支持可选的工具调用
@@ -308,7 +308,7 @@ class SimpleAgent(Agent):
         如果工具是可展开的（expandable=True），会自动展开为多个独立工具
         """
         if not self.tool_registry:
-            from ..tools.registry import ToolRegistry
+            from tools.registry import ToolRegistry
             self.tool_registry = ToolRegistry()
             self.enable_tool_calling = True
 

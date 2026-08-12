@@ -13,12 +13,14 @@ class Agent(ABC):
         name: str,
         llm: PentestAgentLLM,
         system_prompt: Optional[str] = None,
-        config: Optional[Config] = None
+        config: Optional[Config] = None,
+        tool_registry: Optional[Any] = None
     ):
         self.name = name
         self.llm = llm
         self.system_prompt = system_prompt
         self.config = config or Config()
+        self.tool_registry = tool_registry
         self._history: list[Message] = []
     
     @abstractmethod
