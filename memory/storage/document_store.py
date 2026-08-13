@@ -43,6 +43,7 @@ class DocumentStore(ABC):
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         importance_threshold: Optional[float] = None,
+        properties_filter: Optional[Dict[str, Any]] = None,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
         """搜索记忆"""
@@ -268,6 +269,13 @@ class SQLiteDocumentStore(DocumentStore):
             "updated_at": row["updated_at"]
         }
     
+    # 允许作为结构化过滤条件的 properties 字段白名单（对应 DESIGN.md 的 MetaData Schema）。
+    # 用白名单而非放任任意 key，是为了避免把外部传入的键直接拼进 json_extract 路径。
+    _FILTERABLE_PROPERTY_KEYS = frozenset({
+        "engagement_id", "target_ref", "phase", "event_type",
+        "is_target_bound", "outcome", "session_id",
+    })
+
     def search_memories(
         self,
         user_id: Optional[str] = None,
@@ -275,36 +283,53 @@ class SQLiteDocumentStore(DocumentStore):
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         importance_threshold: Optional[float] = None,
+        properties_filter: Optional[Dict[str, Any]] = None,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """搜索记忆"""
+        """搜索记忆
+
+        properties_filter: 对 properties(JSON) 内的结构化字段做等值过滤，
+        典型用途是按 engagement_id/target_ref/phase 圈定候选集合。仅接受
+        _FILTERABLE_PROPERTY_KEYS 内的键，未知键会被忽略并跳过（不影响其他条件）。
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         # 构建查询条件
         where_conditions = []
         params = []
-        
+
         if user_id:
             where_conditions.append("user_id = ?")
             params.append(user_id)
-        
+
         if memory_type:
             where_conditions.append("memory_type = ?")
             params.append(memory_type)
-        
+
         if start_time:
             where_conditions.append("timestamp >= ?")
             params.append(start_time)
-        
+
         if end_time:
             where_conditions.append("timestamp <= ?")
             params.append(end_time)
-        
+
         if importance_threshold:
             where_conditions.append("importance >= ?")
             params.append(importance_threshold)
-        
+
+        # properties JSON 内字段的等值过滤（engagement_id/target_ref/phase 等）
+        if properties_filter:
+            for key, value in properties_filter.items():
+                if key not in self._FILTERABLE_PROPERTY_KEYS:
+                    continue
+                # bool 在 JSON 里存为 true/false，json_extract 返回 1/0，这里统一成整数比较
+                if isinstance(value, bool):
+                    value = 1 if value else 0
+                where_conditions.append(f"json_extract(properties, '$.{key}') = ?")
+                params.append(value)
+
         where_clause = ""
         if where_conditions:
             where_clause = "WHERE " + " AND ".join(where_conditions)

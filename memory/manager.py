@@ -116,18 +116,24 @@ class MemoryManager:
         limit: int = 10,
         min_importance: float = 0.0,
         time_range: Optional[tuple] = None,
-        engagement_id: Optional[str] = None
+        engagement_id: Optional[str] = None,
+        target_ref: Optional[str] = None,
+        phase: Optional[str] = None,
+        event_type: Optional[Union[str, List[str]]] = None
     ) -> List[MemoryItem]:
         """检索记忆
 
         Args:
-            query: 查询内容
+            query: 查询内容（episodic 仅做子串匹配，不是语义相似度）
             memory_types: 要检索的记忆类型列表
             limit: 返回数量限制
             min_importance: 最小重要性阈值
             time_range: 时间范围 (start_time, end_time)
-            engagement_id: 项目级作用域标识，传入时episodic memory只检索该engagement下的记录
-                （semantic等其他类型的retrieve()接受该kwargs但不使用，因为语义知识本就应跨engagement复用）
+            engagement_id: 项目级作用域标识。episodic memory 的唯一检索边界——不传时
+                episodic 直接返回空列表（见 DESIGN.md「Episodic Memory 检索策略」）；
+                semantic 等其他类型的 retrieve() 接受该 kwargs 但不使用，因为语义知识本就应跨engagement复用
+            target_ref/phase/event_type: 结构化收窄条件，仅 episodic 使用；
+                event_type 可传单值或列表
 
         Returns:
             检索到的记忆列表
@@ -148,8 +154,11 @@ class MemoryManager:
                     type_results = memory_instance.retrieve(
                         query=query,
                         limit=per_type_limit,
-                        min_importance=min_importance,
-                        engagement_id=engagement_id
+                        importance_threshold=min_importance,
+                        engagement_id=engagement_id,
+                        target_ref=target_ref,
+                        phase=phase,
+                        event_type=event_type
                     )
                     all_results.extend(type_results)
                 except Exception as e:

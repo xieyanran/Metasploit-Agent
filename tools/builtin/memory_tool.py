@@ -129,10 +129,10 @@ class MemoryTool(BaseTool):
             ToolParameter(name="memory_type", type="string", description="仅perceptual需要显式指定；working/episodic/semantic由is_target_bound自动判定，此参数会被忽略（默认：working）", required=False, default="working"),
             ToolParameter(name="importance", type="number", description="重要性分数，0.0-1.0（add/update时可用）", required=False),
             ToolParameter(name="is_target_bound", type="boolean", description="add时可用：该记忆是否绑定具体渗透target/engagement。True→episodic，False→semantic，不传→working", required=False),
-            ToolParameter(name="engagement_id", type="string", description="项目级作用域标识，比target_ref高一层——一次engagement可能涉及多个target。add时可用（episodic建议提供）；search时可用（传入后episodic memory只检索该engagement下的记录）；purge_engagement时必需（指定要硬删除哪个engagement的episodic记忆）", required=False),
-            ToolParameter(name="target_ref", type="string", description="add时可用：资产级标识（IP/host），is_target_bound=True时应提供", required=False),
-            ToolParameter(name="phase", type="string", description="add时可用：所处PTES阶段，recon/vuln_analysis/exploitation/post_exploitation之一，用于按阶段过滤检索", required=False),
-            ToolParameter(name="event_type", type="string", description="add时可用：事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。仅用于与is_target_bound做一致性校验，不决定分类", required=False),
+            ToolParameter(name="engagement_id", type="string", description="项目级作用域标识，比target_ref高一层——一次engagement可能涉及多个target。add时可用（episodic建议提供）；search/summary时对episodic是唯一检索边界且必须提供——不传时episodic不会返回任何结果（不做无边界搜索），semantic不受此限制；purge_engagement时必需（指定要硬删除哪个engagement的episodic记忆）", required=False),
+            ToolParameter(name="target_ref", type="string", description="资产级标识（IP/host）。add时可用（is_target_bound=True时应提供）；search时可用，作为episodic的结构化收窄条件（精确匹配，不是相似度）", required=False),
+            ToolParameter(name="phase", type="string", description="所处PTES阶段，recon/vuln_analysis/exploitation/post_exploitation之一。add时可用；search时可用，作为episodic的结构化收窄条件", required=False),
+            ToolParameter(name="event_type", type="string", description="事件类型标签，例如asset_discovery/credential_found/exploit_attempt/recon_negative/defense_observed/privesc_lateral_move/osint_finding/scope_directive（episodic）或vuln_technique_knowledge/exploit_applicability_knowledge/vuln_analysis_technique/privesc_lateral_strategy/tool_best_practice/evasion_technique/pattern_insight（semantic）。add时仅用于与is_target_bound做一致性校验，不决定分类；search时可用，作为episodic的精确匹配过滤条件", required=False),
             ToolParameter(name="outcome", type="string", description="add时可用（episodic）：事件结果，success/tech_fail/op_fail/negative之一，用于区分技术性失败与操作性失败", required=False),
             ToolParameter(name="context", type="object", description="add时可用（episodic）：不适合归入结构化字段的自由补充信息，例如原始命令行、完整报文片段等排查用细节；不参与分类/过滤，只作为附加信息存储", required=False),
             ToolParameter(name="causal_ref", type="array", description="add时可用（episodic）：该事件依赖/关联的其他episodic记忆ID列表，用于记录攻击路径因果链（如凭据取自主机A被用于登录主机B）", required=False),
@@ -270,21 +270,28 @@ class MemoryTool(BaseTool):
     @tool_action("memory_search", "搜索相关记忆")
     def _search_memory(
         self,
-        query: str,
+        query: str = "",
         limit: int = 5,
         memory_type: str = None,
         min_importance: float = 0.1,
-        engagement_id: str = None
+        engagement_id: str = None,
+        target_ref: str = None,
+        phase: str = None,
+        event_type: str = None
     ) -> str:
         """搜索记忆
 
         Args:
-            query: 搜索查询内容
+            query: 搜索查询内容。episodic 仅做关键词子串匹配（如 CVE 编号、版本号），
+                不是语义相似度检索；只给结构化条件、不给 query 也可以
             limit: 搜索结果数量限制
             memory_type: 限定记忆类型：working/episodic/semantic/perceptual
             min_importance: 最低重要性阈值
-            engagement_id: 传入时episodic memory只检索该engagement下的记录，
-                避免跨engagement的记忆互相串扰（semantic不受此限制，语义知识本就应跨engagement复用）
+            engagement_id: episodic 的唯一检索边界，必须提供，否则 episodic 不返回任何结果
+                （semantic 不受此限制，语义知识本就应跨engagement复用）
+            target_ref/phase/event_type: episodic 的结构化收窄条件（精确匹配）。
+                只传 engagement_id、不传其余条件时，等价于该 engagement 下
+                "近期+高重要性"的默认摘要清单
 
         Returns:
             搜索结果
@@ -299,7 +306,10 @@ class MemoryTool(BaseTool):
                 limit=limit,
                 memory_types=memory_types,
                 min_importance=min_importance,
-                engagement_id=engagement_id
+                engagement_id=engagement_id,
+                target_ref=target_ref,
+                phase=phase,
+                event_type=event_type
             )
 
             if not results:
@@ -328,11 +338,14 @@ class MemoryTool(BaseTool):
             return f"❌ 搜索记忆失败: {str(e)}"
 
     @tool_action("memory_summary", "获取记忆系统摘要（包含重要记忆和统计信息）")
-    def _get_summary(self, limit: int = 10) -> str:
+    def _get_summary(self, limit: int = 10, engagement_id: str = None) -> str:
         """获取记忆摘要
 
         Args:
             limit: 显示的重要记忆数量
+            engagement_id: 不传时摘要里的重要记忆只覆盖 working/semantic/perceptual——
+                episodic 的唯一检索边界是 engagement_id，不传就不会返回任何 episodic 记录
+                （不做无边界搜索），传入后摘要会包含该 engagement 下的重要 episodic 记忆
 
         Returns:
             记忆摘要
@@ -367,7 +380,8 @@ class MemoryTool(BaseTool):
                 query="",
                 memory_types=None,  # 从所有类型中检索
                 limit=limit * 3,  # 获取更多候选，然后去重
-                min_importance=0.5  # 降低阈值以获取更多记忆
+                min_importance=0.5,  # 降低阈值以获取更多记忆
+                engagement_id=engagement_id
             )
 
             if important_memories:

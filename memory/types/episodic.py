@@ -17,8 +17,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from ..base import BaseMemory, MemoryItem, MemoryConfig
-from ..storage import SQLiteDocumentStore, QdrantVectorStore
-from ..embedding import get_text_embedder, get_dimension
+from ..storage import SQLiteDocumentStore
 
 class Episode:
     """情景记忆中的单个情景
@@ -72,26 +71,13 @@ class EpisodicMemory(BaseMemory):
         self.patterns_cache = {}
         self.last_pattern_analysis = None
 
-        # 权威文档存储（SQLite）
+        # 权威文档存储（SQLite）——检索的唯一数据源，不再引入向量库
+        # （见 DESIGN.md「Episodic Memory 检索策略」：engagement_id 为唯一边界，
+        # 检索走结构化精确查询，不做向量语义召回）
         db_dir = self.config.storage_path if hasattr(self.config, 'storage_path') else "./memory_data"
         os.makedirs(db_dir, exist_ok=True)
         db_path = os.path.join(db_dir, "memory.db")
         self.doc_store = SQLiteDocumentStore(db_path=db_path)
-
-        # 统一嵌入模型（多语言，默认384维）
-        self.embedder = get_text_embedder()
-
-        # 向量存储（Qdrant - 使用连接管理器避免重复连接）
-        from ..storage.qdrant_store import QdrantConnectionManager
-        qdrant_url = os.getenv("QDRANT_URL")
-        qdrant_api_key = os.getenv("QDRANT_API_KEY")
-        self.vector_store = QdrantConnectionManager.get_instance(
-            url=qdrant_url,
-            api_key=qdrant_api_key,
-            collection_name=os.getenv("QDRANT_COLLECTION", "hello_agents_vectors"),
-            vector_size=get_dimension(getattr(self.embedder, 'dimension', 384)),
-            distance=os.getenv("QDRANT_DISTANCE", "cosine")
-        )
 
     # MetaData Schema 中通用层/episodic特有层需要持久化的结构化字段
     _PERSISTED_KEYS = (
@@ -139,27 +125,6 @@ class EpisodicMemory(BaseMemory):
             properties=properties
         )
 
-        # 2) 向量索引（Qdrant）
-        try:
-            embedding = self.embedder.encode(memory_item.content)
-            if hasattr(embedding, "tolist"):
-                embedding = embedding.tolist()
-            self.vector_store.add_vectors(
-                vectors=[embedding],
-                metadata=[{
-                    "memory_id": memory_item.id,
-                    "user_id": memory_item.user_id,
-                    "memory_type": "episodic",
-                    "importance": memory_item.importance,
-                    "session_id": session_id,
-                    "content": memory_item.content
-                }],
-                ids=[memory_item.id]
-            )
-        except Exception:
-            # 向量入库失败不影响权威存储
-            pass
-
         return memory_item.id
 
     def _touch_last_accessed(self, memory_id: str, now_ts: int) -> None:
@@ -175,79 +140,74 @@ class EpisodicMemory(BaseMemory):
         properties["last_accessed_at"] = now_ts
         self.doc_store.update_memory(memory_id=memory_id, properties=properties)
 
-    def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
-        """检索情景记忆（结构化过滤 + 语义向量检索）"""
-        # user_id 不参与检索过滤（单用户场景下不适用，见MemoryItem.user_id）
-        session_id = kwargs.get("session_id")
+    def retrieve(self, query: str = "", limit: int = 5, **kwargs) -> List[MemoryItem]:
+        """检索情景记忆——结构化精确/收窄查询，不做向量语义召回。
+
+        对齐 DESIGN.md「Episodic Memory 检索策略」：
+          - engagement_id 是唯一的安全边界，未提供时直接返回空列表，不做无边界搜索
+          - target_ref / phase / event_type 是可选的结构化收窄条件，由调用方
+            （LLM 在 Action 阶段）显式给出，精确等值匹配，不经过相似度打分
+          - query 可选，仅做大小写不敏感的内容子串匹配，用于精确定位已知关键词
+            （如 CVE 编号、服务版本号），不是语义相似度检索
+          - 只给 engagement_id、不给其他收窄条件时，本方法本身就是默认的
+            "近期+高重要性"摘要清单（召回安全网），无需额外方法
+
+        Args:
+            query: 可选关键词，对 content 做子串匹配
+            limit: 返回数量上限
+            engagement_id: 必填，唯一检索边界
+            target_ref/phase: 可选，结构化收窄
+            event_type: 可选，单个值或列表，精确匹配
+            time_range/importance_threshold: 可选，数值区间过滤
+        """
         engagement_id = kwargs.get("engagement_id")
+        if not engagement_id:
+            logger.warning("episodic.retrieve 缺少 engagement_id：这是唯一检索边界，拒绝无边界查询")
+            return []
+
+        target_ref = kwargs.get("target_ref")
+        phase = kwargs.get("phase")
+        event_type = kwargs.get("event_type")  # str 或 list[str]
         time_range: Optional[Tuple[datetime, datetime]] = kwargs.get("time_range")
         importance_threshold: Optional[float] = kwargs.get("importance_threshold")
 
-        # 结构化过滤候选（来自权威库）
-        candidate_ids: Optional[set] = None
-        if time_range is not None or importance_threshold is not None:
-            start_ts = int(time_range[0].timestamp()) if time_range else None
-            end_ts = int(time_range[1].timestamp()) if time_range else None
-            docs = self.doc_store.search_memories(
-                memory_type="episodic",
-                start_time=start_ts,
-                end_time=end_ts,
-                importance_threshold=importance_threshold,
-                limit=1000
-            )
-            candidate_ids = {d["memory_id"] for d in docs}
+        properties_filter: Dict[str, Any] = {"engagement_id": engagement_id}
+        if target_ref:
+            properties_filter["target_ref"] = target_ref
+        if phase:
+            properties_filter["phase"] = phase
 
-        # 向量检索（Qdrant）
-        try:
-            query_vec = self.embedder.encode(query)
-            if hasattr(query_vec, "tolist"):
-                query_vec = query_vec.tolist()
-            where = {"memory_type": "episodic"}
-            hits = self.vector_store.search_similar(
-                query_vector=query_vec,
-                limit=max(limit * 5, 20),
-                where=where
-            )
-        except Exception:
-            hits = []
+        start_ts = int(time_range[0].timestamp()) if time_range else None
+        end_ts = int(time_range[1].timestamp()) if time_range else None
+        docs = self.doc_store.search_memories(
+            memory_type="episodic",
+            start_time=start_ts,
+            end_time=end_ts,
+            importance_threshold=importance_threshold,
+            properties_filter=properties_filter,
+            limit=1000
+        )
 
-        # 过滤与重排
+        # event_type 支持单值或列表；SQL 层的 properties_filter 只做等值匹配，
+        # 多值匹配在候选集上过滤即可，量级（几十-几百条/engagement）完全撑得住
+        if event_type:
+            wanted = {event_type} if isinstance(event_type, str) else set(event_type)
+            docs = [d for d in docs if (d.get("properties") or {}).get("event_type") in wanted]
+
+        # 关键词是精确子串匹配，不是相似度检索
+        if query:
+            query_lower = query.lower()
+            docs = [d for d in docs if query_lower in (d.get("content") or "").lower()]
+
+        # 排序仅用 recency + importance，不引入向量分数
         now_ts = int(datetime.now().timestamp())
-        results: List[Tuple[float, MemoryItem]] = []
-        seen = set()
-        for hit in hits:
-            meta = hit.get("metadata", {})
-            mem_id = meta.get("memory_id")
-            if not mem_id or mem_id in seen:
-                continue
-
-            if candidate_ids is not None and mem_id not in candidate_ids:
-                continue
-            if session_id and meta.get("session_id") != session_id:
-                continue
-
-            # 从权威库读取完整记录
-            doc = self.doc_store.get_memory(mem_id)
-            if not doc:
-                continue
-            if engagement_id and doc.get("properties", {}).get("engagement_id") != engagement_id:
-                continue
-
-            # 计算综合分数：向量0.6 + 近因0.2 + 重要性0.2
-            vec_score = float(hit.get("score", 0.0))
+        scored: List[Tuple[float, MemoryItem]] = []
+        for doc in docs:
             age_days = max(0.0, (now_ts - int(doc["timestamp"])) / 86400.0)
             recency_score = 1.0 / (1.0 + age_days)
             imp = float(doc.get("importance", 0.5))
-
-            # 新评分算法：向量检索纯基于相似度，重要性作为加权因子
-            # 基础相似度得分（不受重要性影响）
-            base_relevance = vec_score * 0.8 + recency_score * 0.2
-
-            # 重要性作为乘法加权因子，范围 [0.8, 1.2]
             importance_weight = 0.8 + (imp * 0.4)
-
-            # 最终得分：相似度 * 重要性权重
-            combined = base_relevance * importance_weight
+            combined = recency_score * importance_weight
 
             item = MemoryItem(
                 id=doc["memory_id"],
@@ -260,44 +220,13 @@ class EpisodicMemory(BaseMemory):
                     **doc.get("properties", {}),
                     "updated_at": doc.get("updated_at"),
                     "relevance_score": combined,
-                    "vector_score": vec_score,
                     "recency_score": recency_score
                 }
             )
-            results.append((combined, item))
-            seen.add(mem_id)
+            scored.append((combined, item))
 
-        # 若向量检索无结果，回退到简单关键词匹配（内存缓存）
-        if not results:
-            fallback = super()._generate_id  # 占位以避免未使用警告
-            query_lower = query.lower()
-            for ep in self._filter_episodes(session_id, time_range, engagement_id):
-                if query_lower in ep.content.lower():
-                    recency_score = 1.0 / (1.0 + max(0.0, (now_ts - int(ep.timestamp.timestamp())) / 86400.0))
-                    # 回退匹配：新评分算法
-                    keyword_score = 0.5  # 简单关键词匹配的基础分数
-                    base_relevance = keyword_score * 0.8 + recency_score * 0.2
-                    importance_weight = 0.8 + (ep.importance * 0.4)
-                    combined = base_relevance * importance_weight
-                    item = MemoryItem(
-                        id=ep.episode_id,
-                        content=ep.content,
-                        memory_type="episodic",
-                        user_id=ep.user_id,
-                        timestamp=ep.timestamp,
-                        importance=ep.importance,
-                        metadata={
-                            **ep.metadata,
-                            "session_id": ep.session_id,
-                            "outcome": ep.outcome,
-                            "context": ep.context,
-                            "relevance_score": combined
-                        }
-                    )
-                    results.append((combined, item))
-
-        results.sort(key=lambda x: x[0], reverse=True)
-        final = [it for _, it in results[:limit]]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        final = [it for _, it in scored[:limit]]
 
         # 刷新命中记忆的 last_accessed_at——只碰真正返回的 top-N，不碰扫描过的候选
         for it in final:
@@ -305,6 +234,92 @@ class EpisodicMemory(BaseMemory):
             it.metadata["last_accessed_at"] = now_ts
 
         return final
+
+    def get_causal_chain(
+        self,
+        memory_id: str,
+        direction: str = "backward",
+        max_depth: int = 5
+    ) -> List[MemoryItem]:
+        """沿 causal_ref 做精确因果链遍历，回答"这条记录是怎么来的/导向了谁"。
+
+        这类查询天然该用图式精确遍历而不是相似度检索——causal_ref 记的是确定性的
+        依赖关系（如"凭据X取自主机A，被用于登录主机B"），向量相似度既算不出这种
+        因果关系，也没有必要参与。
+
+        Args:
+            memory_id: 起点记忆ID
+            direction: "backward"（回溯这条记录依赖的前置事件）或
+                       "forward"（查找哪些记录的 causal_ref 指向了这条记录）
+            max_depth: 最大遍历层数，防止环形引用导致无限遍历
+
+        Returns:
+            按遍历顺序排列的 MemoryItem 列表（不含起点本身）
+        """
+        start_doc = self.doc_store.get_memory(memory_id)
+        if not start_doc:
+            return []
+
+        visited = {memory_id}
+        result_ids: List[str] = []
+
+        if direction == "backward":
+            frontier = list((start_doc.get("properties") or {}).get("causal_ref") or [])
+            depth = 1
+            while frontier and depth <= max_depth:
+                next_frontier = []
+                for mid in frontier:
+                    if mid in visited:
+                        continue
+                    visited.add(mid)
+                    result_ids.append(mid)
+                    doc = self.doc_store.get_memory(mid)
+                    if doc:
+                        next_frontier.extend((doc.get("properties") or {}).get("causal_ref") or [])
+                frontier = next_frontier
+                depth += 1
+        elif direction == "forward":
+            # causal_ref 不是索引字段，需要在起点所在 engagement 范围内扫描一次；
+            # 量级几十-几百条/engagement，完全可接受
+            engagement_id = (start_doc.get("properties") or {}).get("engagement_id")
+            engagement_docs = self.doc_store.search_memories(
+                memory_type="episodic",
+                properties_filter={"engagement_id": engagement_id} if engagement_id else None,
+                limit=1000
+            )
+            frontier = {memory_id}
+            depth = 1
+            while frontier and depth <= max_depth:
+                next_frontier = set()
+                for doc in engagement_docs:
+                    mid = doc["memory_id"]
+                    if mid in visited:
+                        continue
+                    refs = set((doc.get("properties") or {}).get("causal_ref") or [])
+                    if refs & frontier:
+                        visited.add(mid)
+                        result_ids.append(mid)
+                        next_frontier.add(mid)
+                frontier = next_frontier
+                depth += 1
+        else:
+            raise ValueError(f"direction 只支持 'backward'/'forward'，收到: {direction}")
+
+        items = []
+        for mid in result_ids:
+            doc = self.doc_store.get_memory(mid)
+            if not doc:
+                continue
+            items.append(MemoryItem(
+                id=doc["memory_id"],
+                content=doc["content"],
+                memory_type=doc["memory_type"],
+                user_id=doc["user_id"],
+                timestamp=datetime.fromtimestamp(doc["timestamp"]),
+                importance=doc.get("importance", 0.5),
+                metadata={**doc.get("properties", {}), "updated_at": doc.get("updated_at")}
+            ))
+        return items
 
     def update(
         self,
@@ -330,7 +345,7 @@ class EpisodicMemory(BaseMemory):
                 updated = True
                 break
 
-        # 更新SQLite
+        # 更新SQLite（唯一权威存储，无需再同步向量库）
         doc_updated = self.doc_store.update_memory(
             memory_id=memory_id,
             content=content,
@@ -338,34 +353,10 @@ class EpisodicMemory(BaseMemory):
             properties=metadata
         )
 
-        # 如内容变更，重嵌入并upsert到Qdrant
-        if content is not None:
-            try:
-                embedding = self.embedder.encode(content)
-                if hasattr(embedding, "tolist"):
-                    embedding = embedding.tolist()
-                # 获取更新后的记录以同步payload
-                doc = self.doc_store.get_memory(memory_id)
-                payload = {
-                    "memory_id": memory_id,
-                    "user_id": doc["user_id"] if doc else "",
-                    "memory_type": "episodic",
-                    "importance": (doc.get("importance") if doc else importance) or 0.5,
-                    "session_id": (doc.get("properties", {}) or {}).get("session_id"),
-                    "content": content
-                }
-                self.vector_store.add_vectors(
-                    vectors=[embedding],
-                    metadata=[payload],
-                    ids=[memory_id]
-                )
-            except Exception:
-                pass
-
         return updated or doc_updated
 
     def remove(self, memory_id: str) -> bool:
-        """删除情景记忆（SQLite + Qdrant）"""
+        """删除情景记忆（SQLite）"""
         removed = False
         for i, episode in enumerate(self.episodes):
             if episode.episode_id == memory_id:
@@ -378,14 +369,7 @@ class EpisodicMemory(BaseMemory):
                 removed = True
                 break
 
-        # 权威库删除
         doc_deleted = self.doc_store.delete_memory(memory_id)
-
-        # 向量库删除
-        try:
-            self.vector_store.delete_memories([memory_id])
-        except Exception:
-            pass
 
         return removed or doc_deleted
 
@@ -405,13 +389,6 @@ class EpisodicMemory(BaseMemory):
         ids = [d["memory_id"] for d in docs]
         for mid in ids:
             self.doc_store.delete_memory(mid)
-
-        # Qdrant按ID删除对应向量
-        try:
-            if ids:
-                self.vector_store.delete_memories(ids)
-        except Exception:
-            pass
 
     def clear_by_engagement(self, engagement_id: str) -> int:
         """按engagement_id硬删除该engagement下的episodic记忆（用户显式触发，不自动执行）
@@ -494,15 +471,11 @@ class EpisodicMemory(BaseMemory):
         return memory_items
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取情景记忆统计信息（合并SQLite与Qdrant）"""
+        """获取情景记忆统计信息"""
         # 硬删除模式：所有episodes都是活跃的
         active_episodes = self.episodes
 
         db_stats = self.doc_store.get_database_stats()
-        try:
-            vs_stats = self.vector_store.get_collection_stats()
-        except Exception:
-            vs_stats = {"store_type": "qdrant"}
         return {
             "count": len(active_episodes),  # 活跃记忆数量
             "forgotten_count": 0,  # 硬删除模式下已遗忘的记忆会被直接删除
@@ -511,7 +484,6 @@ class EpisodicMemory(BaseMemory):
             "avg_importance": sum(e.importance for e in active_episodes) / len(active_episodes) if active_episodes else 0.0,
             "time_span_days": self._calculate_time_span(),
             "memory_type": "episodic",
-            "vector_store": vs_stats,
             "document_store": {k: v for k, v in db_stats.items() if k.endswith("_count") or k in ["store_type", "db_path"]}
         }
 
@@ -598,27 +570,6 @@ class EpisodicMemory(BaseMemory):
             })
 
         return timeline
-
-    def _filter_episodes(
-        self,
-        session_id: str = None,
-        time_range: Tuple[datetime, datetime] = None,
-        engagement_id: str = None
-    ) -> List[Episode]:
-        """过滤情景（user_id不参与过滤，见MemoryItem.user_id）"""
-        filtered = self.episodes
-
-        if session_id:
-            filtered = [e for e in filtered if e.session_id == session_id]
-
-        if engagement_id:
-            filtered = [e for e in filtered if e.metadata.get("engagement_id") == engagement_id]
-
-        if time_range:
-            start_time, end_time = time_range
-            filtered = [e for e in filtered if start_time <= e.timestamp <= end_time]
-
-        return filtered
 
     def _calculate_time_span(self) -> float:
         """计算记忆时间跨度（天）"""
