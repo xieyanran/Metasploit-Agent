@@ -6,8 +6,9 @@
 - 知识图谱进行实体关系推理
 - 混合检索策略优化结果质量
 """
+from __future__ import annotations
 
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import List, Dict, Any, Optional, Set, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 import json
 import logging
@@ -16,6 +17,11 @@ import numpy as np
 
 from ..base import BaseMemory, MemoryItem, MemoryConfig
 from ..embedding import get_text_embedder, get_dimension
+
+if TYPE_CHECKING:
+    # spaCy是可选依赖（见_init_nlp的try/except），这里只用于类型标注，
+    # 不引入运行时硬依赖
+    from spacy.tokens import Doc
 
 
 # 配置日志
@@ -670,7 +676,7 @@ class SemanticMemory(BaseMemory):
         
         return entities
     
-    def _store_linguistic_analysis(self, doc, text: str):
+    def _store_linguistic_analysis(self, doc: "Doc", text: str):
         """存储spaCy词法分析结果到Neo4j"""
         if not self.graph_store:
             return
@@ -979,12 +985,195 @@ class SemanticMemory(BaseMemory):
             if metadata is not None:
                 memory.metadata.update(metadata)
 
+            self._persist_to_vector_store(memory)
             return True
 
         except Exception as e:
             logger.error(f"❌ 更新记忆失败: {e}")
         return False
-    
+
+    def _persist_to_vector_store(self, memory: MemoryItem) -> None:
+        """把内存中的MemoryItem完整payload写回Qdrant
+
+        Qdrant的add_vectors是整点替换而非merge，之前update()只改了内存对象、从不回写
+        Qdrant，导致confidence/disputed等字段的更新在进程重启后（甚至下一次检索命中
+        走_touch_last_accessed整payload覆盖时）就丢失了。这里复用与_touch_last_accessed
+        一致的"整payload覆盖"方式，把metadata里当前已知的可持久化字段都带上。
+        """
+        embedding = self.memory_embeddings.get(memory.id)
+        if embedding is None:
+            embedding = self.embedding_model.encode(memory.content)
+            self.memory_embeddings[memory.id] = embedding
+
+        metadata = {
+            "memory_id": memory.id,
+            "user_id": memory.user_id,
+            "content": memory.content,
+            "memory_type": memory.memory_type,
+            "timestamp": int(memory.timestamp.timestamp()),
+            "importance": memory.importance,
+            "entities": memory.metadata.get("entities", []),
+            "entity_count": len(memory.metadata.get("entities", [])),
+            "relation_count": len(memory.metadata.get("relations", [])),
+        }
+        for key in ("confidence", "derived_from", "disputed", "disputed_with",
+                    "disputed_note", "corroboration_count", "last_accessed_at"):
+            if memory.metadata.get(key) is not None:
+                metadata[key] = memory.metadata[key]
+
+        try:
+            self.vector_store.add_vectors(
+                vectors=[embedding.tolist() if hasattr(embedding, "tolist") else embedding],
+                metadata=[metadata],
+                ids=[memory.id]
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ 更新记忆回写Qdrant失败: {e}")
+
+    def get_memory(self, memory_id: str) -> Optional[MemoryItem]:
+        """按ID获取语义记忆（公开接口，供maintenance等外部调用方使用）"""
+        return self._find_memory_by_id(memory_id)
+
+    def find_similar(self, memory_id: str, top_k: int = 5) -> List[Tuple[MemoryItem, float]]:
+        """检索与指定语义记忆最相似的其他语义记忆（不含自身）
+
+        用于Semantic Memory Maintenance阶段筛选去重候选，避免拿新记忆和整个语义库做
+        O(n^2)比较。注意：向量相似度衡量的是"是否在换个说法讲同一个结论"，适合筛
+        去重候选，但不适合筛矛盾候选——两条结论相反的陈述往往共享几乎全部实体和句式
+        （只在结论/否定词上不同），向量相似度反而可能很高；矛盾候选应该用
+        find_related_by_entities（基于知识图谱共享实体）单独筛选，不依赖措辞是否相似。
+        """
+        memory = self._find_memory_by_id(memory_id)
+        if memory is None:
+            return []
+
+        embedding = self.memory_embeddings.get(memory_id)
+        if embedding is None:
+            try:
+                embedding = self.embedding_model.encode(memory.content)
+            except Exception as e:
+                logger.warning(f"⚠️ 相似记忆检索时生成嵌入失败: {e}")
+                return []
+
+        try:
+            results = self.vector_store.search_similar(
+                query_vector=embedding.tolist() if hasattr(embedding, "tolist") else embedding,
+                limit=top_k + 1,  # +1 因为结果通常包含自身
+                where={"memory_type": "semantic"}
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ 相似记忆检索失败: {e}")
+            return []
+
+        similar: List[Tuple[MemoryItem, float]] = []
+        for result in results:
+            candidate_id = result.get("id")
+            if not candidate_id or candidate_id == memory_id:
+                continue
+            candidate = self._find_memory_by_id(candidate_id)
+            if candidate is None:
+                continue
+            similar.append((candidate, result.get("score", 0.0)))
+
+        return similar[:top_k]
+
+    def find_related_by_entities(self, memory_id: str, limit: int = 5) -> List[MemoryItem]:
+        """通过Neo4j知识图谱里的共享实体，查找与指定语义记忆相关的其他语义记忆（不含自身）
+
+        用于Semantic Memory Maintenance阶段筛选矛盾检测候选：两条记忆是否可能矛盾，
+        取决于它们是否在讨论同一个实体（同一个CVE/服务/exploit），而不是措辞是否相似，
+        所以候选来源必须和find_similar（向量相似度）分开，不能共用同一套筛选逻辑。
+
+        已知限制：实体/关系在Neo4j里是MERGE...SET写入的，memory_id是节点/边上的单值
+        属性，被同一实体的后续写入覆盖后只保留最近一次——如果这个实体更早被其他记忆
+        引用过，那条更早的记忆可能不会出现在结果里。这是现有图存储schema（add_entity/
+        add_relationship）本身的限制，_graph_search的检索也有同样的限制，不是这里新
+        引入的问题。
+        """
+        memory = self._find_memory_by_id(memory_id)
+        if memory is None or self.graph_store is None:
+            return []
+
+        entity_ids = memory.metadata.get("entities", [])
+        if not entity_ids:
+            return []
+
+        related_memory_ids: Set[str] = set()
+        for entity_id in entity_ids:
+            try:
+                for rel_entity in self.graph_store.find_related_entities(
+                    entity_id=entity_id, max_depth=1, limit=20
+                ):
+                    if "memory_id" in rel_entity:
+                        related_memory_ids.add(rel_entity["memory_id"])
+
+                for rel in self.graph_store.get_entity_relationships(entity_id):
+                    rel_data = rel.get("relationship", {})
+                    if "memory_id" in rel_data:
+                        related_memory_ids.add(rel_data["memory_id"])
+            except Exception as e:
+                logger.debug(f"图谱候选检索实体 {entity_id} 失败: {e}")
+                continue
+
+        related_memory_ids.discard(memory_id)
+
+        related = []
+        for candidate_id in related_memory_ids:
+            candidate = self._find_memory_by_id(candidate_id)
+            if candidate is not None:
+                related.append(candidate)
+
+        return related[:limit]
+
+    def merge_memories(self, keep_id: str, absorb_id: str) -> bool:
+        """去重合并：把absorb_id判定为keep_id的近似重复，合并二者的derived_from/confidence后硬删除absorb_id
+
+        置信度采用"取二者较高值再小幅上调"而非简单相加或取更大值：被多条独立归纳
+        批次重复印证，本身就是confidence应当提升的证据，但提升幅度需要有上限，
+        避免多轮合并后confidence虚高到脱离实际支撑样本量。
+        """
+        if keep_id == absorb_id:
+            return False
+        keep = self._find_memory_by_id(keep_id)
+        absorb = self._find_memory_by_id(absorb_id)
+        if keep is None or absorb is None:
+            return False
+
+        merged_derived_from = sorted(set(
+            keep.metadata.get("derived_from", []) + absorb.metadata.get("derived_from", [])
+        ))
+        keep_confidence = keep.metadata.get("confidence") or 0.0
+        absorb_confidence = absorb.metadata.get("confidence") or 0.0
+        merged_confidence = min(1.0, max(keep_confidence, absorb_confidence) + 0.1)
+        merged_corroboration = keep.metadata.get("corroboration_count", 1) + 1
+
+        updated = self.update(
+            keep_id,
+            importance=max(keep.importance, absorb.importance),
+            metadata={
+                "derived_from": merged_derived_from,
+                "confidence": merged_confidence,
+                "corroboration_count": merged_corroboration,
+            },
+        )
+        if not updated:
+            return False
+
+        self.remove(absorb_id)
+        logger.info(f"🔗 语义记忆去重合并: {absorb_id[:8]}... -> {keep_id[:8]}... (confidence={merged_confidence:.2f})")
+        return True
+
+    def mark_disputed(self, memory_id: str, conflicting_with: str, note: str = "") -> bool:
+        """矛盾无法自动裁决时，标记为disputed而非删除，留给定期人工审查处理"""
+        return self.update(
+            memory_id,
+            metadata={
+                "disputed": True,
+                "disputed_with": conflicting_with,
+                "disputed_note": note,
+            },
+        )
+
     def remove(self, memory_id: str) -> bool:
         """删除语义记忆"""
         memory = self._find_memory_by_id(memory_id)

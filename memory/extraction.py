@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
+from core.llm import PentestAgentLLM
+
 from .manager import MemoryManager
+from .maintenance import SemanticMemoryMaintainer
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +86,19 @@ def _parse_json_object(text: str) -> Optional[Dict[str, Any]]:
 class MemoryExtractor:
     """事件触发的episodic抽取 + 阶段边界触发的semantic归纳"""
 
-    def __init__(self, memory_manager: MemoryManager, llm=None, engagement_id: Optional[str] = None):
+    def __init__(
+        self,
+        memory_manager: MemoryManager,
+        llm: Optional[PentestAgentLLM] = None,
+        engagement_id: Optional[str] = None,
+    ):
         self.memory_manager = memory_manager
         self.llm = llm
         self.engagement_id = engagement_id
         # 已归纳进semantic的episodic id，避免engagement结束兜底时重复归纳同一批记录
         self._consolidated_episode_ids: set[str] = set()
+        # 阶段归纳产出新semantic记忆后，交给它做去重/矛盾检测（见 maintenance.py）
+        self._semantic_maintainer = SemanticMemoryMaintainer(memory_manager, llm)
 
     # ---------------- Working: 自动直写 ----------------
 
@@ -134,7 +145,13 @@ class MemoryExtractor:
         )
 
     def _extract_episodic_job(
-        self, tool_name, output_text, tool_success, target_ref, phase, session_id
+        self,
+        tool_name: str,
+        output_text: str,
+        tool_success: bool,
+        target_ref: Optional[str],
+        phase: str,
+        session_id: Optional[str],
     ) -> None:
         try:
             judgment = self._judge_episodic_event(tool_name, output_text, tool_success)
@@ -239,8 +256,13 @@ class MemoryExtractor:
             # 这样extract entities合理吗
             entities = sorted(set(_CVE_PATTERN.findall(joined)))
             derived_from = [m.id for m in candidates]
+            # confidence回答"这条知识有多可信"：由归纳所依据的episodic样本数估计，
+            # 样本越多越可信，但边际递减（1条样本约0.3，10条样本约0.65）
+            confidence = round(min(1.0, 0.3 + 0.15 * math.log1p(len(candidates))), 3)
+
+            new_ids = []
             for line in [l.strip("-• \t") for l in summary.splitlines() if l.strip()]:
-                self.memory_manager.add_memory(
+                memory_id = self.memory_manager.add_memory(
                     content=line,
                     memory_type="semantic",
                     metadata={
@@ -248,12 +270,16 @@ class MemoryExtractor:
                         "event_type": "pattern_insight",
                         "entities": entities,
                         "derived_from": derived_from,
+                        "confidence": confidence,
                         "engagement_id": self.engagement_id,
                     },
                     auto_classify=True,
                 )
+                new_ids.append(memory_id)
 
             self._consolidated_episode_ids.update(derived_from)
+            if new_ids:
+                self._semantic_maintainer.maintain(new_ids)
         except Exception as e:
             logger.warning(f"semantic记忆阶段归纳失败（不影响主流程）: {e}")
 
