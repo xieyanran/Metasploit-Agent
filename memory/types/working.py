@@ -63,90 +63,45 @@ class WorkingMemory(BaseMemory):
         
         return memory_item.id
     
-    def retrieve(self, query: str, limit: int = 5, user_id: str = None, **kwargs) -> List[MemoryItem]:
-        """检索工作记忆 - 混合语义向量检索和关键词匹配"""
+    def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
+        """
+        检索工作记忆 - 时间近因为主导因子，重要性为简单加权
+        """
         # 过期清理
         self._expire_old_memories()
         if not self.memories:
             return []
 
         # 过滤已遗忘的记忆
-        active_memories = [m for m in self.memories if not m.metadata.get("forgotten", False)]
-        
-        # 按用户ID过滤（如果提供）
-        filtered_memories = active_memories
-        if user_id:
-            filtered_memories = [m for m in active_memories if m.user_id == user_id]
+        filtered_memories = [m for m in self.memories if not m.metadata.get("forgotten", False)]
+
+        # 按会话ID过滤（如果提供）：
+        session_id = kwargs.get("session_id")
+        if session_id:
+            filtered_memories = [
+                m for m in filtered_memories
+                if m.metadata.get("session_id") == session_id
+            ]
 
         if not filtered_memories:
             return []
 
-        # 尝试语义向量检索（如果有嵌入模型）
-        vector_scores = {}
-        try:
-            # 简单的语义相似度计算（使用TF-IDF或其他轻量级方法）
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.metrics.pairwise import cosine_similarity
-            import numpy as np
-            
-            # 准备文档
-            documents = [query] + [m.content for m in filtered_memories]
-            
-            # TF-IDF向量化
-            vectorizer = TfidfVectorizer(stop_words=None, lowercase=True)
-            tfidf_matrix = vectorizer.fit_transform(documents)
-            
-            # 计算相似度
-            query_vector = tfidf_matrix[0:1]
-            doc_vectors = tfidf_matrix[1:]
-            similarities = cosine_similarity(query_vector, doc_vectors).flatten()
-            
-            # 存储向量分数
-            for i, memory in enumerate(filtered_memories):
-                vector_scores[memory.id] = similarities[i]
-                
-        except Exception as e:
-            # 如果向量检索失败，回退到关键词匹配
-            vector_scores = {}
-
-        # 计算最终分数
-        query_lower = query.lower()
+        query_lower = query.lower() if query else ""
         scored_memories = []
-        
-        for memory in filtered_memories:
-            content_lower = memory.content.lower()
-            
-            # 获取向量分数（如果有）
-            vector_score = vector_scores.get(memory.id, 0.0)
-            
-            # 关键词匹配分数
-            keyword_score = 0.0
-            if query_lower in content_lower:
-                keyword_score = len(query_lower) / len(content_lower)
-            else:
-                # 分词匹配
-                query_words = set(query_lower.split())
-                content_words = set(content_lower.split())
-                intersection = query_words.intersection(content_words)
-                if intersection:
-                    keyword_score = len(intersection) / len(query_words.union(content_words)) * 0.8
 
-            # 混合分数：向量检索 + 关键词匹配
-            if vector_score > 0:
-                base_relevance = vector_score * 0.7 + keyword_score * 0.3
-            else:
-                base_relevance = keyword_score
-            
-            # 时间衰减
+        for memory in filtered_memories:
+            # 时间近因为主导因子
             time_decay = self._calculate_time_decay(memory.timestamp)
-            base_relevance *= time_decay
-            
-            # 重要性权重
+
+            # 重要性简单加权
             importance_weight = 0.8 + (memory.importance * 0.4)
-            final_score = base_relevance * importance_weight
-            
-            if final_score > 0:
-                scored_memories.append((final_score, memory))
+            score = time_decay * importance_weight
+
+            # 关键词命中作为辅助排序，不作为召回手段
+            if query_lower and query_lower in memory.content.lower():
+                score *= 1.2
+
+            scored_memories.append((score, memory))
 
         # 按分数排序并返回
         scored_memories.sort(key=lambda x: x[0], reverse=True)

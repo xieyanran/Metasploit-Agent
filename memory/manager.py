@@ -144,11 +144,11 @@ class MemoryManager:
                 memory_instance = self.memory_types[memory_type]
                 try:
                     # 使用各个记忆类型自己的检索方法
+                    # user_id 不参与检索过滤（单用户场景下不适用，见MemoryItem.user_id）
                     type_results = memory_instance.retrieve(
                         query=query,
                         limit=per_type_limit,
                         min_importance=min_importance,
-                        user_id=self.user_id,
                         engagement_id=engagement_id
                     )
                     all_results.extend(type_results)

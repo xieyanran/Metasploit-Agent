@@ -208,7 +208,7 @@ class PerceptualMemory(BaseMemory):
     
     def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
         """检索感知记忆（可筛模态；同模态向量检索+时间/重要性融合）"""
-        user_id = kwargs.get("user_id")
+        # user_id 不参与检索过滤（单用户场景下不适用，见MemoryItem.user_id）
         target_modality = kwargs.get("target_modality")  # 可选：限制目标模态
         query_modality = kwargs.get("query_modality", target_modality or "text")
 
@@ -216,8 +216,6 @@ class PerceptualMemory(BaseMemory):
         try:
             qvec = self._encode_data(query, query_modality)
             where = {"memory_type": "perceptual"}
-            if user_id:
-                where["user_id"] = user_id
             if target_modality:
                 where["modality"] = target_modality
             store = self._get_vector_store_for_modality(target_modality or query_modality)

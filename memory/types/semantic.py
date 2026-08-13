@@ -288,13 +288,12 @@ class SemanticMemory(BaseMemory):
     def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
         """检索语义记忆"""
         try:
-            user_id = kwargs.get("user_id")
-
+            # user_id 不参与检索过滤（单用户场景下不适用，见MemoryItem.user_id）
             # 1. 向量检索
-            vector_results = self._vector_search(query, limit * 2, user_id)
-            
+            vector_results = self._vector_search(query, limit * 2)
+
             # 2. 图检索
-            graph_results = self._graph_search(query, limit * 2, user_id)
+            graph_results = self._graph_search(query, limit * 2)
             
             # 3. 混合排序
             combined_results = self._combine_and_rank_results(
@@ -372,16 +371,14 @@ class SemanticMemory(BaseMemory):
             logger.error(f"❌ 检索语义记忆失败: {e}")
             return []
     
-    def _vector_search(self, query: str, limit: int, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _vector_search(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Qdrant向量搜索"""
         try:
             # 生成查询向量
             query_embedding = self.embedding_model.encode(query)
-            
+
             # 构建过滤条件
             where_filter = {"memory_type": "semantic"}
-            if user_id:
-                where_filter["user_id"] = user_id
 
             # Qdrant向量检索
             results = self.vector_store.search_similar(
@@ -407,7 +404,7 @@ class SemanticMemory(BaseMemory):
             logger.error(f"❌ Qdrant向量搜索失败: {e}")
             return []
 
-    def _graph_search(self, query: str, limit: int, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _graph_search(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Neo4j图搜索"""
         try:
             # 从查询中提取实体
@@ -463,9 +460,6 @@ class SemanticMemory(BaseMemory):
                     # 优先从本地缓存获取记忆详情，避免占位向量维度不一致问题
                     mem = self._find_memory_by_id(memory_id)
                     if not mem:
-                        continue
-
-                    if user_id and mem.user_id != user_id:
                         continue
 
                     metadata = {

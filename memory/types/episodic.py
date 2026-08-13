@@ -177,7 +177,7 @@ class EpisodicMemory(BaseMemory):
 
     def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
         """检索情景记忆（结构化过滤 + 语义向量检索）"""
-        user_id = kwargs.get("user_id")
+        # user_id 不参与检索过滤（单用户场景下不适用，见MemoryItem.user_id）
         session_id = kwargs.get("session_id")
         engagement_id = kwargs.get("engagement_id")
         time_range: Optional[Tuple[datetime, datetime]] = kwargs.get("time_range")
@@ -189,7 +189,6 @@ class EpisodicMemory(BaseMemory):
             start_ts = int(time_range[0].timestamp()) if time_range else None
             end_ts = int(time_range[1].timestamp()) if time_range else None
             docs = self.doc_store.search_memories(
-                user_id=user_id,
                 memory_type="episodic",
                 start_time=start_ts,
                 end_time=end_ts,
@@ -204,8 +203,6 @@ class EpisodicMemory(BaseMemory):
             if hasattr(query_vec, "tolist"):
                 query_vec = query_vec.tolist()
             where = {"memory_type": "episodic"}
-            if user_id:
-                where["user_id"] = user_id
             hits = self.vector_store.search_similar(
                 query_vector=query_vec,
                 limit=max(limit * 5, 20),
@@ -274,7 +271,7 @@ class EpisodicMemory(BaseMemory):
         if not results:
             fallback = super()._generate_id  # 占位以避免未使用警告
             query_lower = query.lower()
-            for ep in self._filter_episodes(user_id, session_id, time_range, engagement_id):
+            for ep in self._filter_episodes(session_id, time_range, engagement_id):
                 if query_lower in ep.content.lower():
                     recency_score = 1.0 / (1.0 + max(0.0, (now_ts - int(ep.timestamp.timestamp())) / 86400.0))
                     # 回退匹配：新评分算法
@@ -526,17 +523,16 @@ class EpisodicMemory(BaseMemory):
         episode_ids = self.sessions[session_id]
         return [e for e in self.episodes if e.episode_id in episode_ids]
 
-    def find_patterns(self, user_id: str = None, min_frequency: int = 2) -> List[Dict[str, Any]]:
-        """发现用户行为模式"""
+    def find_patterns(self, min_frequency: int = 2) -> List[Dict[str, Any]]:
+        """发现行为模式"""
         # 检查缓存
-        cache_key = f"{user_id}_{min_frequency}"
+        cache_key = f"{min_frequency}"
         if (cache_key in self.patterns_cache and
             self.last_pattern_analysis and
             (datetime.now() - self.last_pattern_analysis).hours < 1):
             return self.patterns_cache[cache_key]
 
-        # 过滤情景
-        episodes = [e for e in self.episodes if user_id is None or e.user_id == user_id]
+        episodes = self.episodes
 
         # 简单的模式识别：基于内容关键词 + 结构化字段
         keyword_patterns = {}
@@ -586,10 +582,9 @@ class EpisodicMemory(BaseMemory):
 
         return patterns
 
-    def get_timeline(self, user_id: str = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_timeline(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取时间线视图"""
-        episodes = [e for e in self.episodes if user_id is None or e.user_id == user_id]
-        episodes.sort(key=lambda x: x.timestamp, reverse=True)
+        episodes = sorted(self.episodes, key=lambda x: x.timestamp, reverse=True)
 
         timeline = []
         for episode in episodes[:limit]:
@@ -606,16 +601,12 @@ class EpisodicMemory(BaseMemory):
 
     def _filter_episodes(
         self,
-        user_id: str = None,
         session_id: str = None,
         time_range: Tuple[datetime, datetime] = None,
         engagement_id: str = None
     ) -> List[Episode]:
-        """过滤情景"""
+        """过滤情景（user_id不参与过滤，见MemoryItem.user_id）"""
         filtered = self.episodes
-
-        if user_id:
-            filtered = [e for e in filtered if e.user_id == user_id]
 
         if session_id:
             filtered = [e for e in filtered if e.session_id == session_id]

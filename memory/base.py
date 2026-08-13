@@ -16,7 +16,8 @@ class MemoryItem(BaseModel):
     id: str
     content: str
     memory_type: str
-    user_id: str
+    # 单用户场景下不参与任何检索/过滤逻辑，仅作为以后多用户agent的扩展字段保留
+    user_id: str = "default_user"
     timestamp: datetime
     importance: float = 0.5
     metadata: Dict[str, Any] = {}
