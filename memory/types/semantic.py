@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import json
 import logging
 import math
+import re
 import numpy as np
 
 from ..base import BaseMemory, MemoryItem, MemoryConfig
@@ -27,6 +28,26 @@ if TYPE_CHECKING:
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 领域实体抽取：正则识别格式规整的结构化标识符
+CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+MS_BULLETIN_PATTERN = re.compile(r"(?<![A-Za-z0-9])MS\d{2}-\d{3}(?!\d)", re.IGNORECASE)
+MSF_MODULE_PATTERN = re.compile(r"exploit/[a-zA-Z0-9_/]+")
+PORT_PATTERN = re.compile(r"(\d{2,5})\s*(?:端口|port)(?![A-Za-z])", re.IGNORECASE)
+
+# 常见服务/组件/协议/防御产品名词典，随经验积累持续扩充，不需要重新训练模型
+DOMAIN_SERVICE_DICT = [
+    "SMB", "RDP", "SSH", "FTP", "Telnet", "HTTP", "HTTPS",
+    "Redis", "MySQL", "PostgreSQL", "MongoDB", "Memcached",
+    "Struts2", "Log4j", "Spring", "Tomcat", "Nginx", "Apache", "IIS",
+    "WordPress", "Jenkins", "GitLab", "Elasticsearch", "Docker", "Kubernetes",
+    "WAF", "EDR", "AV", "IDS", "IPS",
+    "JNDI", "LDAP", "OGNL", "XXE", "SSRF", "RCE",
+]
+
+# 通用NER只作为辅助信号，只保留人名/组织/地域类标签，领域技术词交给正则/词典
+AUX_NER_LABELS = {"PERSON", "ORG", "GPE", "LOC"}
+
 
 class Entity:
     """实体类"""
@@ -295,10 +316,15 @@ class SemanticMemory(BaseMemory):
             # 2. 图检索
             graph_results = self._graph_search(query, limit * 2)
             
-            # 3. 混合排序
+            # 3. 混合排序（多要一些候选做headroom，disputed过滤会剔除部分候选，
+            # 需要有多余候选补位到limit，否则命中disputed记忆时返回条数会少于limit）
             combined_results = self._combine_and_rank_results(
-                vector_results, graph_results, query, limit
+                vector_results, graph_results, query, limit * 3
             )
+
+            # 3.05 disputed过滤：有更可靠替代项的disputed记忆直接剔除，
+            # 唯一候选时保留但把disputed标记透传给下游（见_filter_disputed）
+            combined_results = self._filter_disputed(combined_results)[:limit]
 
             # 3.1 计算概率（对 combined_score 做 softmax 归一化）
             scores = [r.get("combined_score", r.get("vector_score", 0.0)) for r in combined_results]
@@ -344,6 +370,8 @@ class SemanticMemory(BaseMemory):
                         "relation_count": result.get("relation_count", 0),
                         "confidence": result.get("confidence"),
                         "derived_from": result.get("derived_from", []),
+                        "disputed": result.get("disputed", False),
+                        "disputed_with": result.get("disputed_with"),
                         "updated_at": result.get("updated_at"),
                         "combined_score": result.get("combined_score", 0.0),
                         "vector_score": result.get("vector_score", 0.0),
@@ -547,27 +575,34 @@ class SemanticMemory(BaseMemory):
                     "content_hash": content_hash
                 }
         
-        # 计算混合分数：相似度为主，重要性为辅助排序因子
+        # 计算混合分数：相似度为主，重要性/可信度为辅助排序因子
         for memory_id, result in combined.items():
             vector_score = result["vector_score"]
             graph_score = result["graph_score"]
             importance = result.get("importance", 0.5)
-            
-            # 新评分算法：向量检索纯基于相似度，重要性作为加权因子
+            confidence = result.get("confidence")
+
+            # 新评分算法：向量检索纯基于相似度，重要性/可信度作为加权因子
             # 基础相似度得分（不受重要性影响）
             base_relevance = vector_score * 0.7 + graph_score * 0.3
-            
+
             # 重要性作为乘法加权因子，范围 [0.8, 1.2]
             # importance in [0,1] -> weight in [0.8,1.2]
             importance_weight = 0.8 + (importance * 0.4)
-            
-            # 最终得分：相似度 * 重要性权重
-            combined_score = base_relevance * importance_weight
-            
+
+            # 可信度作为乘法加权因子，范围比importance更宽[0.7,1.3]——
+            # 可信度应该比重要性更能决定排序优先级：一条不可信的经验即使重要性判断
+            # 很高也不该排到前面。confidence缺失（老记录/非归纳来源）时权重为中性1.0
+            confidence_weight = 0.7 + (confidence * 0.6) if confidence is not None else 1.0
+
+            # 最终得分：相似度 * 重要性权重 * 可信度权重
+            combined_score = base_relevance * importance_weight * confidence_weight
+
             # 调试信息：查看分数分解
             result["debug_info"] = {
                 "base_relevance": base_relevance,
                 "importance_weight": importance_weight,
+                "confidence_weight": confidence_weight,
                 "combined_score": combined_score
             }
 
@@ -596,7 +631,22 @@ class SemanticMemory(BaseMemory):
                 logger.debug(f"  结果{i+1}: 向量={result['vector_score']:.3f}, 图={result['graph_score']:.3f}, 精确={result.get('exact_match_bonus', 0):.3f}, 关键词={result.get('keyword_bonus', 0):.3f}, 公司={result.get('company_bonus', 0):.3f}, 实体={result.get('entity_type_bonus', 0):.3f}, 综合={result['combined_score']:.3f}")
         
         return sorted_results[:limit]
-    
+
+    def _filter_disputed(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """disputed过滤：候选集合里若有更可靠的替代项就剔除disputed记忆，
+
+        没有替代项（disputed记忆是唯一候选）时保留，但disputed标记会随payload
+        原样透传到retrieve()构建的MemoryItem.metadata里，交给上层LLM自行判断是否采信，
+        而不是静默隐藏这个风险信号——错误的经验比没有经验更危险。
+        """
+        present_ids = {r.get("memory_id") for r in results}
+        filtered = []
+        for r in results:
+            if r.get("disputed") and r.get("disputed_with") in present_ids:
+                continue
+            filtered.append(r)
+        return filtered
+
     def _detect_language(self, text: str) -> str:
         """简单的语言检测"""
         # 统计中文字符比例（无正则，逐字符判断范围）
@@ -609,10 +659,54 @@ class SemanticMemory(BaseMemory):
         chinese_ratio = chinese_chars / total_chars
         return "zh" if chinese_ratio > 0.3 else "en"
     
+    def _extract_domain_entities(self, text: str) -> List[Entity]:
+        """基于正则和领域词典抽取实体：CVE/MS漏洞编号/msf模块路径/端口号/常见服务组件名
+
+        通用NER对这类格式规整或有限枚举的领域技术词基本识别不出来（不在训练语料分布、
+        也不在PERSON/ORG/GPE这类预定义类别里），所以这里作为图检索的主要实体信号来源，
+        _extract_entities里再和spaCy抽取的辅助实体合并使用。
+        """
+        entities: List[Entity] = []
+        seen_ids: Set[str] = set()
+
+        def _add(raw_text: str, normalized: str, entity_type: str):
+            entity_id = f"entity_{hash(normalized)}"
+            if entity_id in seen_ids:
+                return
+            seen_ids.add(entity_id)
+            entities.append(Entity(
+                entity_id=entity_id,
+                name=raw_text,
+                entity_type=entity_type,
+                description=f"正则/词典识别的{entity_type}实体"
+            ))
+
+        for m in CVE_PATTERN.finditer(text):
+            _add(m.group(0), m.group(0).upper(), "CVE")
+        for m in MS_BULLETIN_PATTERN.finditer(text):
+            _add(m.group(0), m.group(0).upper(), "MS_BULLETIN")
+        for m in MSF_MODULE_PATTERN.finditer(text):
+            _add(m.group(0), m.group(0).lower(), "MSF_MODULE")
+        for m in PORT_PATTERN.finditer(text):
+            _add(f"{m.group(1)}端口", f"PORT_{m.group(1)}", "PORT")
+
+        lowered = text.lower()
+        for service in DOMAIN_SERVICE_DICT:
+            if service.lower() in lowered:
+                _add(service, service.upper(), "SERVICE")
+
+        return entities
+
     def _extract_entities(self, text: str) -> List[Entity]:
-        """智能多语言实体提取"""
-        entities = []
-        
+        """智能多语言实体提取
+
+        正则/词典抽取的领域实体（CVE/MS漏洞编号/msf模块路径/端口号/常见服务组件名）是
+        图检索的主匹配信号；通用NER只用来补充人名/组织/地域这类辅助实体（AUX_NER_LABELS），
+        不参与主匹配。
+        """
+        entities = self._extract_domain_entities(text)
+        seen_ids = {e.entity_id for e in entities}
+
         # 检测文本语言
         lang = self._detect_language(text)
         
@@ -644,8 +738,14 @@ class SemanticMemory(BaseMemory):
                         logger.debug(f"   '{token.text}' -> POS: {token.pos_}, TAG: {token.tag_}, ENT_IOB: {token.ent_iob_}")
                 
                 for ent in doc.ents:
+                    if ent.label_ not in AUX_NER_LABELS:
+                        continue
+                    entity_id = f"entity_{hash(ent.text)}"
+                    if entity_id in seen_ids:
+                        continue
+                    seen_ids.add(entity_id)
                     entity = Entity(
-                        entity_id=f"entity_{hash(ent.text)}",
+                        entity_id=entity_id,
                         name=ent.text,
                         entity_type=ent.label_,
                         description=f"从文本中识别的{ent.label_}实体"

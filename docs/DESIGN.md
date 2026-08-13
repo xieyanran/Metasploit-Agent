@@ -93,7 +93,7 @@ hello-agents/
 ## DeSign Memory System
 
 ### how to design the Memory System?
-> 澄清场景，记忆分类，明确记忆的完整生命周期，trade-off以及失败处理
+> 澄清场景，记忆分类，明确记忆的完整生命周期，反思与验证
 
 - 强依赖场景：面向单用户还是多用户（涉及隔离和权限）？记忆需要跨会话还是只在单会话内？信息的更新频率如何，是偏静态的用户画像还是高频变化的任务状态？规模量级多大，是几百条还是千万级（决定要不要上向量库）？对准确性和延迟的要求哪个优先？
     - 面向单用户
@@ -118,9 +118,7 @@ hello-agents/
 
 - 完整的生命周期: 提取/写入 -> 组织 -> 检索 -> 维护
 
-- 记忆系统设计上的Trade-off
-
-- 如何处理一些失败：记忆污染（错误信息被存下来后反复强化）、语义漂移（多轮摘要导致信息逐渐失真）、隐私问题（敏感信息该不该存、怎么删除、用户要求遗忘怎么办）。
+- 记忆系统设计上的Trade-off/如何处理一些失败：记忆污染（错误信息被存下来后反复强化）、语义漂移（多轮摘要导致信息逐渐失真）、隐私问题（敏感信息该不该存、怎么删除、用户要求遗忘怎么办）。
 
 ### Memory Extraction
 > 提取记忆的时机
@@ -180,9 +178,9 @@ hello-agents/
     > 分层设计：通用层（四类记忆共享）+ 类型特有层（仅 episodic/semantic/perceptual 各自需要）。
 
     - **通用层**（working/episodic/semantic/perceptual 共用）：
-        - `session_id` (str, 自动写入)：归属会话，已在 `memory_tool.py` 实现
-        - `engagement_id` (str, episodic 必填/其余可选)：项目级作用域标识，比现有的 `target_ref` 高一层——一次 engagement 可能涉及多个 target，拆成两个字段能同时支持"查这个项目下所有记录"和"查这台主机下所有记录"两种检索粒度，呼应"单用户但需要 engagement 级隔离"的结论
-        - `target_ref` (str, episodic 建议填)：资产级标识（IP/host），沿用已有字段
+        - `session_id` (str, working/episodic/perceptual 必填/仅 semantic 可选)：归属会话，已在 `memory_tool.py` 实现自动写入。semantic 的检索边界本身是全局的（跨 session/engagement/target，见 Semantic Memory 检索策略一节），从不按 session_id 过滤，留空不影响任何功能。
+        - `engagement_id` (str, episodic 必填/working、perceptual 建议填/仅 semantic 可选)：项目级作用域标识，比现有的 `target_ref` 高一层——一次 engagement 可能涉及多个 target，拆成两个字段能同时支持"查这个项目下所有记录"和"查这台主机下所有记录"两种检索粒度，呼应"单用户但需要 engagement 级隔离"的结论。semantic 同上不需要——provenance 已由 `derived_from` 追溯回具体 episodic 记录，不需要在 semantic 记录自身冗余存一份。
+        - `target_ref` (str, episodic 建议填/perceptual 建议填)：资产级标识（IP/host），沿用已有字段。perceptual 建议填的原因见 Perceptual Memory 检索策略一节——"和当前排查的 target/session 是否对应"是证据类记忆的重要过滤维度。
         - `phase` (enum: `recon`/`vuln_analysis`/`exploitation`/`post_exploitation`)：对齐 PTES 四阶段，复用 VulnBot 阶段转换触发 Summarizer 的做法——既是提取时机的触发条件，也是检索时的过滤维度（例如做利用阶段推理时，只想召回该 target 在侦察阶段发现的资产，不想被后渗透阶段的记录干扰）
         - `is_target_bound` (bool)：episodic/semantic 分类开关，已有，保留
         - `updated_at` (int, 时间戳)：存储层（SQLite `memories.updated_at`）本就在每次 `update()` 时自动维护，直接透出到 metadata 不增加成本；用于区分"写入后再没动过"与"被反复修正/强化"的记录，也可作为 semantic 知识 `confidence` 走向稳定的辅助信号，以及时间衰减类遗忘策略的更优时间基准（用最后修正时间而非最初创建时间，避免误删近期被强化过的老记录）
@@ -222,7 +220,31 @@ hello-agents/
    - 检索思路: LLM先查询Semantic（联想相似情境/经验，思考可能的攻击链），引入RAG系统之后也可以作为reference→ 基于此LLM再判断具体metadata参数作SQL查询。
     
 - **Semantic Memory 检索策略的thinking && design**
-- 
+    - **检索边界**：没有任何硬性的过滤边界，跨 session/engagement/target 全局检索——这是已有分类标准（"换个目标还有用吗"）的自然延伸，semantic memory 本身就是脱离具体 target 才成立的经验。
+
+    - **实体抽取**：正则 + 词典为主，不依赖通用 NER 作为主匹配信号。
+        - 正则抓格式规整的结构化标识符：CVE 编号（`CVE-\d{4}-\d{4,7}`）、MS 漏洞编号（`MS\d{2}-\d{3}`）、msf 模块路径、端口号等。
+        - 词典抓常见服务/组件/协议/防御产品名（SMB、Redis、Struts2、WAF 厂商名等），这份词典随经验积累持续增长——在 episodic→semantic 归纳环节顺手把新出现的服务/组件名补充进去，不需要重新训练模型。
+        - 通用 NER（spaCy）继续并行跑，补充人名/组织/地域类辅助实体、写入图谱做辅助节点，但不作为图检索的主匹配信号——它对 CVE 编号、msf 模块路径这类领域技术词基本不会识别为实体，靠它做主信号图检索这条腿等于半失效。
+        - Query 和 memory content 用同一套抽取逻辑，保证两边的实体 id 能对上。
+
+    - **双路召回**：向量检索（Qdrant 相似度）+ 图检索（Neo4j，用抽出的实体找 2 跳内相关记忆），两路各自独立召回后再融合，不互相替代。
+
+    - **融合排序公式**：
+        ```
+        base_relevance    = vector_score * 0.7 + graph_score * 0.3
+        importance_weight  = 0.8 + importance * 0.4         区间 [0.8, 1.2]
+        confidence_weight  = 0.7 + confidence * 0.6          区间 [0.7, 1.3]
+        combined_score     = base_relevance * importance_weight * confidence_weight
+        ```
+        - `confidence_weight` 新增，且区间比 `importance_weight` 更宽——可信度应该比重要性更能决定排序优先级：一条不可信的经验即使重要性判断很高也不该排到前面，这是把 `confidence`/`disputed` 这两个已经设计在 metadata schema 里、但之前没有真正参与排序的字段接回检索链路。
+        - 0.7/0.3 的向量/图权重先沿用已有比例，后续如果有真实检索日志支持再调整。
+
+    - **Disputed 过滤规则**：候选集合里若某条 disputed 记忆存在未被标记的替代项（`disputed_with` 指向的记忆也在候选集中），直接剔除该 disputed 记忆，不进入返回结果；若 disputed 记忆是唯一候选（没有替代项一起出现），保留但在返回的 `MemoryItem.metadata` 里显式标注 `disputed=True`，把风险信号交给上层 LLM 自行判断是否采信，而不是静默隐藏——错误的经验比没有经验更危险，这一步直接对应"记忆污染"那一节提到的风险。
+
+    - **失败兜底**：图检索异常/超时不能阻塞向量检索的返回，两路独立 fail-open，保证最差情况下退化为"纯向量检索"，而不是整个 retrieve() 抛异常返回空。
+
+    - 检索前的 query 联想扩展（让 LLM 先把 query 联想成候选关键词再检索）评估过但暂不引入，复杂度和当前阶段的收益不匹配，先把上面几项落地、有实际检索数据后再重新评估。
 
 - **Perceptual Memory 检索策略的思路**
     - 原始内容（截图、流量包、音频）本身没有可供关键词或结构化字段直接匹配的文本语义，检索天然只能走相似度这一条路——这是数据形态决定的，不是设计取舍的结果。
