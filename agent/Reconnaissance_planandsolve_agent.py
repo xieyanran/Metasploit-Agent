@@ -4,13 +4,13 @@ Reference: https://github.com/jjyaoao/HelloAgents/blob/main/hello_agents/agents/
 """
 import json
 from typing import Optional, List, Dict, Any, AsyncGenerator
-from ..core.llm import PentestAgentLLM
-from ..core.agent import Agent
-from ..core.message import Message
-from ..core.config import Config
-from ..core.streaming import StreamEvent, StreamEventType
-from ..core.lifecycle import LifecycleHook
-from ..tools.registry import ToolRegistry
+from core.llm import PentestAgentLLM
+from core.agent import Agent
+from core.message import Message
+from core.config import Config
+from core.streaming import StreamEvent, StreamEventType
+from core.lifecycle import LifecycleHook
+from tools.registry import ToolRegistry
 
 RECON_PLANNER_SYSTEM_PROMPT = """你是一名资深渗透测试工程师，当前处于 PTES 方法论的「情报收集」（Intelligence Gathering）阶段。
 

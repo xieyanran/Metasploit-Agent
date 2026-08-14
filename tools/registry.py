@@ -1,5 +1,5 @@
 from tools.base import BaseTool
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 from agent.state import AgentState
 from agent.models import ToolResult
 # Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/tools/registry.py
@@ -57,6 +57,10 @@ class ToolRegistry:
     def get_tool(self, name: str) -> Optional[BaseTool]:
         """获取工具函数"""
         return self._tools.get(name)
+
+    def get_all_tools(self) -> List[BaseTool]:
+        """获取所有已注册的 Tool 对象（不含 register_function 注册的函数式工具）"""
+        return list(self._tools.values())
 
     def get_function(self, name: str) -> Optional[Callable]:
         """获取工具函数"""
