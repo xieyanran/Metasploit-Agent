@@ -1,4 +1,5 @@
 import os
+import time
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
@@ -201,15 +202,36 @@ class PentestAgentLLM:
             if response.reasoning_content:  # thinking model的推理过程
                 print(response.reasoning_content)
         """
-        # 合并参数
-        call_kwargs = {
-            "temperature": kwargs.pop("temperature", self.temperature),
-        }
-        if self.max_tokens:
-            call_kwargs["max_tokens"] = kwargs.pop("max_tokens", self.max_tokens)
+        # 直接复用think()已验证可用的self.client（OpenAI兼容客户端），非流式调用；
+        # 不依赖self._adapter——历史上这个方法整段复制自参考项目HelloAgents，_adapter
+        # 是原项目里的适配器抽象层，本项目从未移植、__init__也从未初始化过，之前调用
+        # 必然抛AttributeError（self._adapter/self.temperature/self.max_tokens均不存在）
+        temperature = kwargs.pop("temperature", 0)
+        max_tokens = kwargs.pop("max_tokens", None)
+        call_kwargs = {"temperature": temperature}
+        if max_tokens:
+            call_kwargs["max_tokens"] = max_tokens
         call_kwargs.update(kwargs)
 
-        return self._adapter.invoke(messages, **call_kwargs)
+        start = time.monotonic()
+        response = self.client.chat.completions.create(
+            model=self.model, messages=messages, stream=False, **call_kwargs
+        )
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        message = response.choices[0].message
+        usage = response.usage
+        return LLMResponse(
+            content=message.content or "",
+            model=response.model or self.model,
+            usage={
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            } if usage else {},
+            latency_ms=latency_ms,
+            reasoning_content=getattr(message, "reasoning_content", None),
+        )
 
     def invoke_with_tools(
         self,

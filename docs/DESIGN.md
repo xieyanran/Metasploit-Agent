@@ -102,31 +102,81 @@ This agent will rely on its own custom-built framework for the time being, rathe
 一句话概括：Context Engineering 是通用的、面向单次推理的信息治理原则；Memory System 是在这个渗透测试场景下，把"哪些信息要跨会话留存"单独抽出来做的存储/检索/维护子系统——Memory 为 Context 提供长程知识，Context Engineering 反过来约束 Memory 输出的内容该以什么样子进入模型的推理窗口。
 
 ## MetaspolitAgents Architecture(version 1.0.0)
-hello-agents/
-├── tests/
-│  
-├── core/                     # 核心框架层
-│   ├── agent.py              # Agent基类
-│   ├── llm.py                # HelloAgentsLLM统一接口
-│   ├── message.py            # 消息系统
-│   ├── config.py             # 配置管理
-│   └── exceptions.py         # 异常体系
-│   
-├── agents/                   # Agent实现层
-│   ├── simple_agent.py       # SimpleAgent实现
-│   ├── react_agent.py        # ReActAgent实现
-│   ├── reflection_agent.py   # ReflectionAgent实现
-│   └── plan_solve_agent.py   # PlanAndSolveAgent实现
-│   
-├── tools/                    # 工具系统层
-│   ├── base.py               # 工具基类
-│   ├── registry.py           # 工具注册机制
-│   ├── chain.py              # 工具链管理系统
-│   ├── async_executor.py     # 异步工具执行器
-│   └── builtin/              # 内置工具集
-│       ├── calculator.py     # 计算工具
-│       └── search.py         # 搜索工具
-└── memory/
+```
+firstpentestAgent/
+├── agent/                          # Agent实现层
+│   ├── simple_agent.py              # SimpleAgent实现
+│   ├── reconnaissance_planandsolve_agent.py  # Plan-and-Solve，驱动侦察阶段
+│   ├── exploit_react_agent.py       # ReAct，驱动漏洞利用阶段
+│   ├── MetaspolitSimpleAgent.py
+│   ├── models.py                    # Agent数据模型
+│   ├── state.py / state_manager.py  # Agent状态管理
+│   └── planner/                     # 规划子模块
+│       ├── planner.py
+│       ├── strategy.py
+│       ├── task_graph.py
+│       └── workflow.py
+│
+├── core/                           # 核心框架层
+│   ├── agent.py                     # Agent基类
+│   ├── llm.py / my_llm.py           # LLM统一接口
+│   ├── llm_response.py
+│   ├── message.py                   # 消息系统
+│   ├── config.py                    # 配置管理
+│   ├── lifecycle.py                 # 生命周期管理
+│   ├── streaming.py
+│   └── exceptions.py                # 异常体系
+│
+├── context/                        # Context Engineering层
+│   └── builder.py                   # ContextBuilder: Gather-Select-Structure-Compress
+│
+├── memory/                         # 记忆系统层
+│   ├── manager.py                   # 记忆管理入口
+│   ├── base.py
+│   ├── extraction.py                # 记忆提取
+│   ├── maintenance.py               # 记忆维护（遗忘/去重/巩固）
+│   ├── embedding.py
+│   ├── types/                       # 四类记忆
+│   │   ├── working.py
+│   │   ├── episodic.py
+│   │   ├── semantic.py
+│   │   └── perceptual.py
+│   ├── storage/                     # 存储介质
+│   │   ├── document_store.py        # SQLite
+│   │   ├── qdrant_store.py          # 向量库
+│   │   └── neo4j_store.py           # 图数据库
+│   └── rag/                         # RAG（规划中，暂未启用）
+│       ├── document.py
+│       └── pipeline.py
+│
+├── metasploit/                     # Metasploit RPC封装层
+│   ├── client.py / rpc.py           # msfrpc客户端
+│   ├── core.py / console.py
+│   ├── modules.py / plugins.py
+│   ├── job.py / session.py
+│   └── exceptions.py
+│
+├── tools/                          # 工具系统层
+│   ├── base.py                      # 工具基类
+│   ├── registry.py                  # 工具注册机制
+│   ├── chain.py                     # 工具链管理系统
+│   ├── async_execute.py             # 异步工具执行器
+│   ├── response.py
+│   └── builtin/                     # 内置工具集
+│       ├── nmap_scan.py
+│       ├── search_module.py / get_module_info.py
+│       ├── run_module.py / set_option.py / show_option.py
+│       ├── list_jobs.py / job_info.py / stop_job.py
+│       ├── list_sessions.py / execute_session.py / stop_session.py / kill_meterpreter_session.py
+│       ├── session_compatible_modules.py / compatible_payloads.py
+│       ├── shell_upgrade.py
+│       ├── memory_tool.py
+│       └── rag_tool.py
+│
+├── docs/                           # 设计文档
+├── tests/                          # 测试
+└── examples/
+```
 
 ## DeSign Memory System
 
@@ -337,6 +387,43 @@ hello-agents/
 
 - 最小规则：不引入来源/优先级等分类维度，避免复杂度增长。实践表明，基于相关性和新近性的简单评分机制，在大多数场景下已经足够有效。
     
+### 核心数据结构
+
+### GSSC 流水线详解
+
+- Gather: 多源信息汇集
+    - P0: 系统指令
+    - P1: 从记忆中获取任务状态与关键结论
+        - 执行顺序：semantic 先行，episodic 依赖 semantic 的检索结果做参数判断
+        - semantic memory：直接用 user_query 做语义检索，检索结果同时作为下一步 episodic 参数判断的输入
+        - episodic memory：engagement_id 是唯一安全边界，必带且不受判断结果影响——缺失则跳过整个分支，不做无边界搜索；target_ref/phase/event_type/query 这几个收窄条件不再由代码直接从当前 state 取值，而是交给 LLM 基于 semantic 的检索结果判断，判断结果也可以是 should_query=false（本轮不查）。LLM 不可用、调用异常或输出解析失败时，兜底退回到用当前 state 的 target_ref/phase（不设 event_type），即和旧方案一致的行为，不会比没有这一步更差
+        - working memory：本 session 内最近几次工具调用的 Action+Observation；limit 刻意设小（当前 3 条）
+    - P2: 从RAG系统检索相关知识
+    - P3: 添加对话历史
+    - P4: 添加自定义context packet
+
+- Select：智能信息选择（直接决定上下文的质量）
+    - 排序依据：复合分 = 0.7×相关性 + 0.3×新近性
+        - 相关性：user_query 与候选包内容的关键词重叠比例——纯词面匹配，不引入向量检索，候选包量级小（个位数到十几个），没必要为此上向量库
+        - 新近性：指数衰减 `exp(-Δt/3600)`，1小时时间尺度，越新的信息权重越高，但不会断崖式清零
+    - 优先级白名单：`{instructions, task_state, recent_actions}` 固定纳入，不受最小相关性阈值（`min_relevance=0.3`）过滤
+        - 原因：这几类内容本质是系统指令/结构化事件记录/原始工具日志，和自然语言 user_query 天然缺乏字面重叠，若和其余内容一样走关键词相关性过滤，几乎总会被误判为"不相关"而丢弃——等于让 P0/P1 辛苦查回来的东西形同虚设。相关性过滤只对 related_memory（semantic）/knowledge_base/history 这类"和当前问题强相关才值得保留"的内容生效
+    - 预算填充：贪心策略。先放入优先包（不排序，全部尝试塞入），再按复合分从高到低加入其余包，一旦下一个包会超出可用预算（`max_tokens` 扣除生成余量后的可用值）就跳过——不做整体重排或部分裁剪，保证每个被选中的包内容完整
+
+- Structure：结构化输出
+    - 固定六段模板，按 `metadata["type"]` 路由，某类型没有命中的包时该分区整体不出现（不留空标题占位）：
+        - `[Role & Policies]` ← instructions（P0）
+        - `[Task]` ← user_query 原样嵌入，不经过 Select 筛选，每次必然出现
+        - `[State]` ← task_state（episodic 关键结论）+ recent_actions（working 最近动作），两个来源在同一分区内用不同子标题区分，让 LLM 能分辨"这是复盘出的结论"还是"这是刚做过的动作"
+        - `[Evidence]` ← related_memory（semantic）/knowledge_base（RAG，当前禁用）/retrieval/tool_result 等"证据类"内容统一归入
+        - `[Context]` ← 对话历史
+        - `[Output]` ← 固定的输出格式约束（结论/依据/风险与假设/下一步行动建议），不依赖检索结果，每次都追加在最后
+    - 设计取舍：分区边界按"内容语义角色"划分，不是按"来源模块"划分——例如 episodic 和 working 是两个不同的记忆子系统，但因为都回答"目前进展到哪"，被合并进同一个 `[State]` 分区；这样 LLM 消费到的上下文骨架是稳定的，不会随内部实现调整（比如以后给 P1 加第四种记忆来源）而变化
+
+- Compress：兜底压缩（对上下文进行压缩处理）
+    - 触发条件：仅当结构化文本的 token 数超过可用预算时才动作，未超预算直接原样返回，不做任何无谓处理
+    - 当前策略：按行贪心截断——逐行累加 token 数，一旦下一行会超预算就整体停止，保留已经拼接的完整行（不做行内截断），尽量维持已保留分区的结构完整性，而不是不看结构地砍到定长
+    - 已知局限：这是"硬截断"而非"高保真摘要"，超出预算的内容是被整体丢弃而不是压缩保留要点——上面 Context Engineering 一节里 Compaction 提到的"让模型压缩并保留架构性决策"式的智能摘要目前还没有用在这里，只是先用简单兜底策略保证不超预算；后续如果发现频繁触发 Compress，值得替换成真正的 LLM 摘要压缩
 
 
 
