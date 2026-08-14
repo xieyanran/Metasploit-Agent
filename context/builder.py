@@ -13,8 +13,13 @@ from datetime import datetime
 import tiktoken
 import math
 
-from ..core.message import Message
-from ..tools import MemoryTool, RAGTool
+from core.message import Message
+from tools.builtin.memory_tool import MemoryTool
+# RAG系统本项目暂不引入（见 docs/DESIGN.md「Retrieval-Augmented Generation Design」，
+# 仍在未来拓展开发中）。下方 rag_tool 相关接线整体注释保留，需要启用时取消注释即可，
+# 届时 tools/builtin/rag_tool.py（目前是空文件）也需要先实现 RAGTool。
+from agent.state import AgentState
+from agent.models import ToolResult
 
 
 @dataclass
@@ -55,7 +60,7 @@ class ContextBuilder:
     ```python
     builder = ContextBuilder(
         memory_tool=memory_tool,
-        rag_tool=rag_tool,
+        # rag_tool=rag_tool,  # RAG本项目暂不引入，见__init__
         config=ContextConfig(max_tokens=8000)
     )
     
@@ -70,35 +75,41 @@ class ContextBuilder:
     def __init__(
         self,
         memory_tool: Optional[MemoryTool] = None,
-        rag_tool: Optional[RAGTool] = None,
+        # rag_tool: Optional[Any] = None,  # RAG本项目暂不引入，见文件头注释；启用时取消注释
         config: Optional[ContextConfig] = None
     ):
         self.memory_tool = memory_tool
-        self.rag_tool = rag_tool
+        # self.rag_tool = rag_tool  # 同上，随构造参数一并禁用
         self.config = config or ContextConfig()
         self._encoding = tiktoken.get_encoding("cl100k_base")
     
     def build(
         self,
         user_query: str,
+        state: Optional[AgentState] = None,
+        engagement_id: Optional[str] = None,
         conversation_history: Optional[List[Message]] = None,
         system_instructions: Optional[str] = None,
         additional_packets: Optional[List[ContextPacket]] = None
     ) -> str:
         """构建完整上下文
-        
+
         Args:
             user_query: 用户查询
+            state: 当前AgentState，用于提取target_ref/phase以收窄episodic记忆检索
+            engagement_id: 当前engagement标识，episodic记忆检索的唯一边界（不传则跳过episodic检索）
             conversation_history: 对话历史
             system_instructions: 系统指令
             additional_packets: 额外的上下文包
-            
+
         Returns:
             结构化上下文字符串
         """
         # 1. Gather: 收集候选信息
         packets = self._gather(
             user_query=user_query,
+            state=state,
+            engagement_id=engagement_id,
             conversation_history=conversation_history or [],
             system_instructions=system_instructions,
             additional_packets=additional_packets or []
@@ -122,65 +133,86 @@ class ContextBuilder:
     def _gather(
         self,
         user_query: str,
+        state: Optional[AgentState],
+        engagement_id: Optional[str],
         conversation_history: List[Message],
         system_instructions: Optional[str],
         additional_packets: List[ContextPacket]
     ) -> List[ContextPacket]:
         """Gather: 收集候选信息"""
         packets = []
-        
+
         # P0: 系统指令（强约束）
         if system_instructions:
             packets.append(ContextPacket(
                 content=system_instructions,
                 metadata={"type": "instructions"}
             ))
-        
+
         # P1: 从记忆中获取任务状态与关键结论
         if self.memory_tool:
+            # execute()的state形参只是BaseTool接口约束，MemoryTool本身不读取其内容；
+            # state为空时用占位对象满足接口即可，但target_ref/phase必须从调用方传入的
+            # 原始state提取，不能用占位对象——否则会把AgentState()默认的ptes_phase="recon"
+            # 误当成当前真实所处阶段
+            effective_state = state if state is not None else AgentState()
+            target_ref = state.target.address if (state and state.target) else None
+            phase = state.ptes_phase if state else None
+
             try:
-                # 搜索任务状态相关记忆
-                state_results = self.memory_tool.run({
-                    "action": "search",
-                    "query": "(任务状态 OR 子目标 OR 结论 OR 阻塞)",
-                    "min_importance": 0.7,
-                    "limit": 5
-                })
-                if state_results and "未找到" not in state_results:
-                    packets.append(ContextPacket(
-                        content=state_results,
-                        metadata={"type": "task_state", "importance": "high"}
-                    ))
-                
-                # 搜索与当前查询相关的记忆
-                related_results = self.memory_tool.run({
-                    "action": "search",
-                    "query": user_query,
-                    "limit": 5
-                })
-                if related_results and "未找到" not in related_results:
-                    packets.append(ContextPacket(
-                        content=related_results,
-                        metadata={"type": "related_memory"}
-                    ))
+                # episodic：本engagement（+target/phase）下的结构化任务状态与结论。
+                # engagement_id是episodic检索的唯一边界，缺失则跳过，不做无边界搜索
+                if engagement_id:
+                    episodic_kwargs: Dict[str, Any] = {
+                        "memory_type": "episodic",
+                        "engagement_id": engagement_id,
+                        "min_importance": 0.5,
+                        "limit": 5,
+                    }
+                    if target_ref:
+                        episodic_kwargs["target_ref"] = target_ref
+                    if phase:
+                        episodic_kwargs["phase"] = phase
+                    episodic_result = self.memory_tool.execute(
+                        effective_state, action="search", **episodic_kwargs
+                    )
+                    if _memory_search_has_results(episodic_result):
+                        packets.append(ContextPacket(
+                            content=episodic_result.output,
+                            metadata={"type": "task_state", "source": "episodic", "importance": "high"}
+                        ))
+
+                # semantic：与当前查询相关的可迁移知识（自由文本；融合排序与disputed
+                # 过滤已在memory/types/semantic.py的检索层实现）
+                if user_query and user_query.strip():
+                    semantic_result = self.memory_tool.execute(
+                        effective_state, action="search",
+                        memory_type="semantic", query=user_query, limit=5
+                    )
+                    if _memory_search_has_results(semantic_result):
+                        packets.append(ContextPacket(
+                            content=semantic_result.output,
+                            metadata={"type": "related_memory", "source": "semantic"}
+                        ))
             except Exception as e:
                 print(f"⚠️ 记忆检索失败: {e}")
-        
-        # P2: 从RAG中获取事实证据
-        if self.rag_tool:
-            try:
-                rag_results = self.rag_tool.run({
-                    "action": "search",
-                    "query": user_query,
-                    "limit": 5
-                })
-                if rag_results and "未找到" not in rag_results and "错误" not in rag_results:
-                    packets.append(ContextPacket(
-                        content=rag_results,
-                        metadata={"type": "knowledge_base"}
-                    ))
-            except Exception as e:
-                print(f"⚠️ RAG检索失败: {e}")
+
+        # P2: 从RAG中获取事实证据 —— RAG本项目暂不引入，整块注释保留，
+        # 启用时需同步取消__init__里rag_tool参数/属性的注释
+        # if self.rag_tool:
+        #     try:
+        #         rag_results = self.rag_tool.run({
+        #             "action": "search",
+        #             "query": user_query,
+        #             "limit": 5
+        #         })
+        #         if rag_results and "未找到" not in rag_results and "错误" not in rag_results:
+        #             packets.append(ContextPacket(
+        #                 content=rag_results,
+        #                 metadata={"type": "knowledge_base"}
+        #             ))
+        #     except Exception as e:
+        #         print(f"⚠️ RAG检索失败: {e}")
         
         # P3: 对话历史（辅助材料）
         if conversation_history:
@@ -229,21 +261,26 @@ class ContextBuilder:
             score = 0.7 * p.relevance_score + 0.3 * rec
             scored_packets.append((score, p))
         
-        # 4) 系统指令单独拿出，固定纳入
-        system_packets = [p for (_, p) in scored_packets if p.metadata.get("type") == "instructions"]
+        # 4) 系统指令 + episodic任务状态：固定纳入，不受min_relevance过滤。
+        # task_state内容是结构化事件记录，和自然语言user_query字面重叠通常很低，
+        # 若仍走min_relevance过滤几乎总会被丢弃，等于让P1这层形同虚设。
+        # related_memory（semantic）不在此列，仍按relevance参与筛选——语义记忆
+        # 本就该按与当前问题的相关度取舍。
+        ALWAYS_INCLUDE_TYPES = {"instructions", "task_state"}
+        priority_packets = [p for (_, p) in scored_packets if p.metadata.get("type") in ALWAYS_INCLUDE_TYPES]
         remaining = [p for (s, p) in sorted(scored_packets, key=lambda x: x[0], reverse=True)
-                     if p.metadata.get("type") != "instructions"]
-        
-        # 5) 依据 min_relevance 过滤（对非系统包）
+                     if p.metadata.get("type") not in ALWAYS_INCLUDE_TYPES]
+
+        # 5) 依据 min_relevance 过滤（对非优先包）
         filtered = [p for p in remaining if p.relevance_score >= self.config.min_relevance]
-        
+
         # 6) 按预算填充
         available_tokens = self.config.get_available_tokens()
         selected: List[ContextPacket] = []
         used_tokens = 0
-        
-        # 先放入系统指令（不排序）
-        for p in system_packets:
+
+        # 先放入优先包（不排序）
+        for p in priority_packets:
             if used_tokens + p.token_count <= available_tokens:
                 selected.append(p)
                 used_tokens += p.token_count
@@ -340,6 +377,15 @@ class ContextBuilder:
             used_tokens += line_tokens
         
         return "\n".join(compressed_lines)
+
+
+def _memory_search_has_results(result: ToolResult) -> bool:
+    """判断memory_tool的search调用是否真的命中了记忆。
+
+    ToolResult.success只代表"调用没有内部报错"——未命中时_search_memory仍返回
+    success=True，但output是"🔍 未找到..."提示语，因此需要额外判断output内容。
+    """
+    return bool(result and result.success and result.output and "未找到" not in str(result.output))
 
 
 def count_tokens(text: str) -> int:

@@ -328,9 +328,23 @@ class MemoryTool(BaseTool):
                 }.get(memory.memory_type, memory.memory_type)
 
                 content_preview = memory.content[:80] + "..." if len(memory.content) > 80 else memory.content
-                formatted_results.append(
-                    f"{i}. [{memory_type_label}] {content_preview} (重要性: {memory.importance:.2f})"
+                line = f"{i}. [{memory_type_label}] {content_preview} (重要性: {memory.importance:.2f}"
+                # confidence/disputed 由 semantic 检索的融合排序+过滤逻辑算出，
+                # 但只落在 MemoryItem.metadata 里；context/builder.py 最终只把
+                # 这段格式化文本（content）交给LLM，metadata不会被读取，因此这两个
+                # 信号必须在这里就转成文本，否则LLM永远看不到
+                confidence = memory.metadata.get("confidence")
+                if confidence is not None:
+                    line += f", 可信度: {confidence:.2f}"
+                line += ")"
+                if memory.metadata.get("disputed"):
+                    line += " ⚠️存在冲突记录，请谨慎采信"
+                tag = "/".join(
+                    t for t in (memory.metadata.get("event_type"), memory.metadata.get("outcome")) if t
                 )
+                if tag:
+                    line += f" [{tag}]"
+                formatted_results.append(line)
 
             return "\n".join(formatted_results)
 

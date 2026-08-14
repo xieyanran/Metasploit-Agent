@@ -60,8 +60,46 @@ This agent will rely on its own custom-built framework for the time being, rathe
 在推理阶段，如何策划与维护“最优的信息集合(tokens)”, 不仅仅包括提示本身，还包括其他会进入上下文窗口的一切信息。
 
 - 为什么context Engineering 很重要
-面向长时程任务的上下文工程
+    - 上下文腐蚀(context rot): 随着上下文窗口中的tockens增加，模型从上下文中准确回忆信息的能力反而下降。因此，上下文被视作一种资源，并且具有边际收益递减。
 
+- 目标：用尽可能少，但高信号密度的tockens,最大化获得期望结果的概率。
+
+- Context Engineering组件
+    - System Prompt 语言清晰、直白，信息层级把握在“刚刚好”的高度。常见两极误区：
+        - 过度硬编码：在提示中写入复杂、脆弱的 if-else 逻辑，长期维护成本高、易碎。
+        - 过于空泛：只给出宏观目标与泛化指引
+        - 建议将提示分区组织（如 <background_information>、、工具指引、输出描述等），用 XML/Markdown 分隔。
+    - Tools:
+        - 工具定义了智能体与信息/行动空间的契约，必须促进效率：既要返回token 友好的信息，又要鼓励高效的智能体行为。
+            - 职责单一、相互低重叠，接口语义清晰；
+            - 对错误鲁棒
+            - 入参描述明确、无歧义，充分发挥模型擅长的表达与推理能力
+    - 示例（Few-shot）：始终推荐提供示例, 对 LLM 而言，好的示例胜过千言万语
+
+- 面向长时程任务的上下文工程：
+    - Compaction: 
+        - 定义：当对话接近上下文上限时，对其进行高保真总结，并用该摘要重启一个新的上下文窗口，以维持长程连贯性。
+        - 实践：让模型压缩并保留架构性决策、未解决缺陷、实现细节，丢弃重复的工具输出与噪声；新窗口携带压缩摘要 + 最近少量高相关工件（如“最近访问的若干文件”）。
+        - 调参建议：先优化召回（确保不遗漏关键信息），再优化精确度（剔除冗余内容）；一种安全的“轻触式”压缩是对“深历史中的工具调用与结果”进行清理。
+    - Structed note-taking:
+        - 定义：也称“智能体记忆”。智能体以固定频率将关键信息写入上下文外的持久化存储，在后续阶段按需拉回。
+        - 价值：以极低的上下文开销维持持久状态与依赖关系。例如维护 TODO 列表、项目 NOTES.md、关键结论/依赖/阻塞项的索引，跨数十次工具调用与多轮上下文重置仍能保持进度与一致性。
+        - 说明：在非编码场景中同样有效（如长期策略性任务、游戏/仿真中的目标管理与统计计数）。结合第八章的 MemoryTool，可轻松实现文件式/向量式的外部记忆并在运行时检索。
+    - Sub-agent architectures:
+        - 
+
+### Context Engineering && Memory System 
+
+| 维度 | Context Engineering | Memory System |
+|---|---|---|
+| 关注层面 | 单次推理时，喂给模型的 token 集合该如何组织 | 信息在时间维度上该如何提取、分类、存储、检索、维护 |
+| 核心问题 | "这一刻上下文窗口里该放什么" | "这些信息从哪来、该不该留、留多久、怎么被找回来" |
+| 作用范围 | 运行时/单次 LLM 调用层面的策略 | 跨会话/跨 engagement 的系统架构层面设计 |
+| 目标 | 用尽可能少、信号密度尽可能高的 token，最大化拿到期望输出的概率 | 让 agent 能持久保留资产/凭据/经验，避免长任务中重复扫描、重复试错 |
+| 典型组件/技术 | System Prompt、Tools、Few-shot、Compaction、Structured note-taking | Working/Episodic/Semantic/Perceptual 四层记忆的提取时机、组织粒度、检索策略、遗忘与巩固机制 |
+| 二者关系 | 约束 Memory 检索结果必须以什么形态、什么密度进入 context window（结论摘要+结构化标签，而非原始记录），否则会造成 context rot | 为 Context Engineering 提供可复用的长程知识供给层；Structured note-taking 本质就是"以固定频率写入外部持久化存储、按需拉回"的 memory 机制 |
+
+一句话概括：Context Engineering 是通用的、面向单次推理的信息治理原则；Memory System 是在这个渗透测试场景下，把"哪些信息要跨会话留存"单独抽出来做的存储/检索/维护子系统——Memory 为 Context 提供长程知识，Context Engineering 反过来约束 Memory 输出的内容该以什么样子进入模型的推理窗口。
 
 ## MetaspolitAgents Architecture(version 1.0.0)
 hello-agents/
@@ -281,6 +319,23 @@ hello-agents/
 
 关于confidence以及importance
 
+## ContextBuilder Design
+
+### Design Motivation and Goal
+
+- 统一入口：将"获取(Gather)- 选择(Select)- 结构化(Structure)- 压缩(Compress)"抽象为可复用流水线。
+
+- 稳定形态：输出固定骨架的上下文模板，便于调试、A/B 测试与评估。我们采用了分区组织的模板结构：
+    - [Role & Policies]：明确 Agent 的角色定位和行为准则
+    - [Task]：当前需要完成的具体任务
+    - [State]：Agent 的当前状态和上下文信息
+    - [Evidence]：从外部知识库检索的证据信息
+    - [Context]：历史对话和相关记忆
+    - [Output]：期望的输出格式和要求
+
+- 预算守护：在 token 预算内尽量保留高价值信息，对超限上下文提供兜底压缩策略。这确保了即使在信息量巨大的场景下，系统也能稳定运行。
+
+- 最小规则：不引入来源/优先级等分类维度，避免复杂度增长。实践表明，基于相关性和新近性的简单评分机制，在大多数场景下已经足够有效。
     
 
 
