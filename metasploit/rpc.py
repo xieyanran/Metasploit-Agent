@@ -3,18 +3,32 @@
 # Python -> MSF RPC client（rpc.py） -> MSF RPC server -> MSF framework
 # 2026-7-10 version 1.0.0
 
+import os
 import requests
 import msgpack
+from dotenv import load_dotenv
 from metasploit.exceptions import RPCError, RPCConnectionError, RPCTimeoutError, AuthenticationError
-from typing import Any
+from typing import Any, Optional
+
+# 加载 .env 文件中的环境变量（与 core/llm.py 的 PentestAgentLLM 做法一致）
+load_dotenv()
 
 class MetasploitRPCClient:
-    def __init__(self, host, port, username, password):
-        # Configuration parameters
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
+    def __init__(self, host: Optional[str] = None, port: Optional[int] = None,
+                 username: Optional[str] = None, password: Optional[str] = None):
+        # Configuration parameters：显式传参优先，否则回退到 .env 里的
+        # MSF_RPC_HOST/MSF_RPC_PORT/MSF_RPC_USERNAME/MSF_RPC_PASSWORD
+        self.host = host or os.getenv("MSF_RPC_HOST")
+        port = port if port is not None else os.getenv("MSF_RPC_PORT")
+        self.port = int(port) if port is not None else None
+        self.username = username or os.getenv("MSF_RPC_USERNAME")
+        self.password = password or os.getenv("MSF_RPC_PASSWORD")
+
+        if not all([self.host, self.port, self.username, self.password]):
+            raise ValueError(
+                "host/port/username/password 必须被提供，或在 .env 中定义 "
+                "MSF_RPC_HOST/MSF_RPC_PORT/MSF_RPC_USERNAME/MSF_RPC_PASSWORD。"
+            )
 
         # Runtime parameters
         self.token = None
