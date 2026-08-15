@@ -100,6 +100,20 @@ class MetasploitRPCClient:
         # print(type(result))
         # print("!!!!!!!!!!!!")
         # print(result)
+
+        # MSF RPC 报错时返回 {"error": true, "error_message": ..., ...} 而不是
+        # HTTP 错误状态码，之前没有在这里拦截，导致调用方（各 tools/builtin/*.py）
+        # 拿到的是"看起来正常"的 dict，只能各自判断或干脆忽略，run_module/job_info/
+        # stop_job/stop_session/shell_upgrade 等工具因此把 RPC 报错误判为成功。
+        # 在这里统一拦截并抛出，交给 ToolRegistry.execute_tool 的异常兜底转换成
+        # ToolResult(success=False, ...)。
+        if isinstance(result, dict) and result.get("error"):
+            raise RPCError(
+                result.get("error_message", str(result)),
+                method=method,
+                details=result,
+            )
+
         return result
 
 def _decode(obj):

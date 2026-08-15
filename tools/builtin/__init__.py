@@ -20,6 +20,7 @@ from tools.builtin.list_jobs import ListJobsTool
 from tools.builtin.job_info import JobInfoTool
 from tools.builtin.stop_job import StopJobTool
 from tools.builtin.stop_session import StopSessionTool
+from tools.builtin.memory_tool import MemoryTool
 
 
 def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient) -> None:
@@ -42,3 +43,14 @@ def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient) -> 
     registry.register_tool(JobInfoTool(client))
     registry.register_tool(StopJobTool(client))
     registry.register_tool(StopSessionTool(client))
+
+    # "memory" 工具此前从未在这里注册，导致 core.agent.Agent._get_memory_extractor()
+    # 里的 tool_registry.get_tool("memory") 一直静默返回 None，记忆子系统全程空转。
+    # semantic 记忆当前依赖 Qdrant/Neo4j 且引用了本项目里不存在的
+    # core.database_config 模块，初始化会直接抛异常，因此这里只启用 working/episodic
+    # （两者都是本地 SQLite 存储，已验证可用）。如果连这两种都初始化失败（比如
+    # memory_data 目录不可写），不应该拖垮其余 16 个 Metasploit 工具的注册。
+    try:
+        registry.register_tool(MemoryTool(memory_types=["working", "episodic"]))
+    except Exception as e:
+        print(f"⚠️ 警告: 记忆工具 'memory' 初始化失败，跳过注册: {e}")

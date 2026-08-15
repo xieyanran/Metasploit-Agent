@@ -12,10 +12,10 @@ class InfoModuleTool(BaseTool):
     """
     Get information about a Metasploit module.
     """
-    name = "info_module"
+    name = "get_module_info"
     description = "List information about Metasploit module."
 
-    def __init__(self, client: MetasploitClient, name: str = "info_module", description: str = "List information about Metasploit module."):
+    def __init__(self, client: MetasploitClient, name: str = "get_module_info", description: str = "List information about Metasploit module."):
         self.client = client
         self.name = name
         self.description = description

@@ -13,6 +13,7 @@
 """
 
 from typing import List, Union, Optional
+import inspect
 import threading
 import os
 import numpy as np
@@ -227,6 +228,13 @@ class DashScopeEmbedding(EmbeddingModel):
 # 工厂与回退
 # ==============
 
+_EMBEDDING_CLASSES = {
+    "local": LocalTransformerEmbedding,
+    "dashscope": DashScopeEmbedding,
+    "tfidf": TFIDFEmbedding,
+}
+
+
 def create_embedding_model(model_type: str = "local", **kwargs) -> EmbeddingModel:
     """创建嵌入模型实例
 
@@ -244,7 +252,13 @@ def create_embedding_model(model_type: str = "local", **kwargs) -> EmbeddingMode
 
 
 def create_embedding_model_with_fallback(preferred_type: str = "dashscope", **kwargs) -> EmbeddingModel:
-    """带回退的创建：dashscope -> local -> tfidf"""
+    """带回退的创建：dashscope -> local -> tfidf
+
+    kwargs 里的 model_name/api_key/base_url 是给 dashscope/local 用的，TFIDFEmbedding
+    只接受 max_features——统一透传会让 TFIDFEmbedding(**kwargs) 抛 TypeError，被下面的
+    except Exception 吞掉，导致 tfidf 这个本该总能兜底成功的选项也被跳过，最终误报
+    "所有嵌入模型都不可用"。这里按每个类实际接受的参数过滤 kwargs 再传入。
+    """
     if preferred_type in ("sentence_transformer", "huggingface"):
         preferred_type = "local"
     fallback = ["dashscope", "local", "tfidf"]
@@ -254,7 +268,9 @@ def create_embedding_model_with_fallback(preferred_type: str = "dashscope", **kw
         fallback.insert(0, preferred_type)
     for t in fallback:
         try:
-            return create_embedding_model(t, **kwargs)
+            accepted = set(inspect.signature(_EMBEDDING_CLASSES[t].__init__).parameters) - {"self"}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+            return create_embedding_model(t, **filtered_kwargs)
         except Exception:
             continue
     raise RuntimeError("所有嵌入模型都不可用，请安装依赖或检查配置")

@@ -30,16 +30,17 @@ class KillMeterpreterSessionTool(BaseTool):
                 session_id: int,
                 ) -> ToolResult:
 
-        session = state.execution.current_session
+        sessions = self.client.sessions.list()
+        session = sessions.get(session_id, sessions.get(str(session_id)))
 
         if session is None:
              return ToolResult(
                   tool = f"Meterpreter Session Kill",
                   success = False,
-                  output = "No active session in state.",
+                  output = f"Session {session_id} not found.",
             )
-        
-        session_type = session.type
+
+        session_type = session.get("type", "")
 
         if session_type != "Meterpreter":
              return ToolResult(

@@ -31,9 +31,10 @@ class ExecuteSessionTool(BaseTool):
                 ) -> ToolResult:
 
         # check the session_id exits or not
-        sessions = state.target.sessions
+        sessions = self.client.sessions.list()
+        session = sessions.get(session_id, sessions.get(str(session_id)))
 
-        if session_id not in sessions:
+        if session is None:
             return ToolResult(
                 tool = "set_session",
                 success = False,
@@ -41,9 +42,10 @@ class ExecuteSessionTool(BaseTool):
                 message = "The session_id is not exit."
             )
 
-        session = sessions[session_id]
         session_type = session.get("type", "")
         state.execution.current_session = session
+        if state.target is not None:
+            state.target.sessions = sessions
 
         try:
             if session_type == "Meterpreter":
@@ -95,6 +97,7 @@ class ExecuteSessionTool(BaseTool):
             return ToolResult(
                 tool = f"Meterpreter Session Set and Execute a Command",
                 success = False,
-                output = dict(e),
+                output = None,
+                message = str(e),
             )
 

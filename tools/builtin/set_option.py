@@ -23,27 +23,23 @@ class SetOptionTool(BaseTool):
 
     def get_parameters(self) -> List[ToolParameter]:
         return [
-            ToolParameter(name="options", type="object", description="Options to set on the currently selected module, as a dict of option name to value."),
+            ToolParameter(name="module_type", type="string", description="Metasploit module type (e.g. exploit, auxiliary, post)."),
+            ToolParameter(name="module_name", type="string", description="Metasploit module name."),
+            ToolParameter(name="options", type="object", description="Options to set on the module, as a dict of option name to value."),
         ]
 
     def execute(
-            self, 
+            self,
             state: AgentState,
+            module_type: str,
+            module_name: str,
             options: dict, # LLM Reasoning
             ) -> ToolResult:
 
-        if state.module.module_name is None:
-            return ToolResult(
-                tool = "use_module",
-                success = False,
-                output = None,
-                message = "No module selected."
-            )
-
         # validate
         available_options = self.client.modules.options(
-            state.module.module_type,
-            state.module.module_name,
+            module_type,
+            module_name,
         )
 
         # 模块自身的 module.options() 只包含 RHOSTS/RPORT 这类 exploit 自己的选项，
@@ -71,7 +67,11 @@ class SetOptionTool(BaseTool):
         if "PAYLOAD" in options:
             state.module.payload = options["PAYLOAD"]
 
-        state.module.options = options
+        # 累加而非覆盖：调用方按"每次设置一个/几个选项"的方式多次调用本工具，
+        # 之前已设置好的选项（如 RHOSTS）不应被本次调用清空。
+        state.module.module_type = module_type
+        state.module.module_name = module_name
+        state.module.options = {**state.module.options, **options}
 
         return ToolResult(
             tool = "set_option",
