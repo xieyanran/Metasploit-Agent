@@ -31,8 +31,12 @@
 - Traceroute
 
 - Telnet
+> Telnet protocol: Communicate with remote system via command-line interface. From a security perspective, telnet sends all data in cleartext, including usernames and passwords. The secure alternative is SSH.
+> banner grabing: You connect to a service and read the initial response, called the "banner", that the server sends back. Banners frequently reveal the software name and version running on that port.
 
-- Netcat
+- Netcat(simply as nc)
+    -  It can function as a client that connects to a listening port, or as a server that listens on a port of your choice. This dual capability makes it useful for banner grabbing, port probing, simple file transfers, and basic client-server communication. 
+    - networking utility that supports both TCP and UDP protocols. 
 
 
 

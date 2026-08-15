@@ -247,7 +247,11 @@ class MemoryTool(BaseTool):
                 auto_classify=True
             )
 
-            return f"✅ 记忆已添加 (ID: {memory_id[:8]}...)"
+            # 返回完整memory_id（不截断）：exploitation阶段需要把这个id原样记下来，
+            # 作为causal_ref传给后续相关联的episodic写入（例如"凭据X取自主机A"记录的
+            # memory_id，后续在"用该凭据登录主机B"的记录里作为causal_ref引用），
+            # 截断后的id无法被后续调用精确引用
+            return f"✅ 记忆已添加 (ID: {memory_id})"
 
         except Exception as e:
             return f"❌ 添加记忆失败: {str(e)}"
@@ -328,7 +332,9 @@ class MemoryTool(BaseTool):
                 }.get(memory.memory_type, memory.memory_type)
 
                 content_preview = memory.content[:80] + "..." if len(memory.content) > 80 else memory.content
-                line = f"{i}. [{memory_type_label}] {content_preview} (重要性: {memory.importance:.2f}"
+                # id必须完整暴露（不截断）：episodic/semantic检索结果常常是后续写入新记忆时
+                # causal_ref/derived_from的来源，截断的id无法被精确引用
+                line = f"{i}. [id: {memory.id}] [{memory_type_label}] {content_preview} (重要性: {memory.importance:.2f}"
                 # confidence/disputed 由 semantic 检索的融合排序+过滤逻辑算出，
                 # 但只落在 MemoryItem.metadata 里；context/builder.py 最终只把
                 # 这段格式化文本（content）交给LLM，metadata不会被读取，因此这两个

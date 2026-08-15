@@ -67,6 +67,44 @@ class ToolRegistry:
         func_info = self._functions.get(name)
         return func_info["func"] if func_info else None
 
+    def to_function_schemas(self) -> List[Dict[str, Any]]:
+        """把所有已注册的Tool对象转换成OpenAI Function Calling的tools schema列表。
+
+        提炼出来的共用方法：PostReconReActAgent（vuln_analysis/exploitation/
+        post_exploitation三阶段共用的ReAct循环）和
+        Reconnaissance_planandsolve_agent.py::Executor（侦察阶段Plan-and-Solve的
+        逐步执行器）都需要"把注册表里的工具转成Function Calling schema"这个能力，
+        之前各写一份容易漂移，见docs/DESIGN.md「复用点」。不包含Thought/Finish这类
+        ReAct专属的内置工具schema——那些由调用方自己在返回结果前追加。
+        """
+        return [self._tool_to_schema(tool) for tool in self._tools.values()]
+
+    @staticmethod
+    def _tool_to_schema(tool: BaseTool) -> Dict[str, Any]:
+        """将单个BaseTool转换为Function Calling schema"""
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+        for param in tool.get_parameters():
+            properties[param.name] = {
+                "type": param.type,
+                "description": param.description,
+            }
+            if param.required:
+                required.append(param.name)
+
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
+
     def get_tools_description(self) -> str:
         """
         获取所有可用工具的格式化描述字符串

@@ -27,7 +27,7 @@ There are three popular, classic agent architectures in common use today: ReAct,
 
 ### Current Design
 
-The current design follows the industry-standard PTES methodology (Intelligence Gathering → Threat Modeling/Vulnerability Analysis → Exploitation → Post-Exploitation). The reconnaissance stage uses a Plan-and-Solve architecture to produce a detailed exploitation plan up front. Every subsequent stage uses a ReAct architecture, dynamically adjusting the original plan as new information emerges:
+The current design follows the industry-standard PTES methodology (Intelligence Gathering → Threat Modeling/Vulnerability Analysis → Exploitation → Post-Exploitation). The reconnaissance stage uses a Plan-and-Solve architecture (`agent/reconnaissance_planandsolve_agent.py::PlanSolveAgent`) to produce a detailed exploitation plan up front. Every subsequent stage uses a ReAct architecture, dynamically adjusting the original plan as new information emerges — concretely, a single `agent/post_recon_react_agent.py::PostReconReActAgent` instance is reused across all three stages (Vulnerability Analysis, Exploitation, Post-Exploitation): the orchestrator calls `set_ptes_phase()` at each stage boundary and re-invokes `run()`, and the agent renders a phase-specific system prompt from `state.ptes_phase` each time (see「ReAct 阶段 × Context/Memory 融合设计」below). The agent never decides on its own when a stage ends — that authority stays with the orchestrator:
 
 **Plan-and-Solve generates the initial penetration plan → ReAct executes it step by step, triggering a re-plan whenever a deviation or new discovery arises.**
 
@@ -107,15 +107,10 @@ firstpentestAgent/
 ├── agent/                          # Agent实现层
 │   ├── simple_agent.py              # SimpleAgent实现
 │   ├── reconnaissance_planandsolve_agent.py  # Plan-and-Solve，驱动侦察阶段
-│   ├── exploit_react_agent.py       # ReAct，驱动漏洞利用阶段
+│   ├── post_recon_react_agent.py    # ReAct，驱动vuln_analysis/exploitation/post_exploitation三阶段
 │   ├── MetaspolitSimpleAgent.py
 │   ├── models.py                    # Agent数据模型
-│   ├── state.py / state_manager.py  # Agent状态管理
-│   └── planner/                     # 规划子模块
-│       ├── planner.py
-│       ├── strategy.py
-│       ├── task_graph.py
-│       └── workflow.py
+│   └── state.py / state_manager.py  # Agent状态管理
 │
 ├── core/                           # 核心框架层
 │   ├── agent.py                     # Agent基类
@@ -425,5 +420,114 @@ firstpentestAgent/
     - 当前策略：按行贪心截断——逐行累加 token 数，一旦下一行会超预算就整体停止，保留已经拼接的完整行（不做行内截断），尽量维持已保留分区的结构完整性，而不是不看结构地砍到定长
     - 已知局限：这是"硬截断"而非"高保真摘要"，超出预算的内容是被整体丢弃而不是压缩保留要点——上面 Context Engineering 一节里 Compaction 提到的"让模型压缩并保留架构性决策"式的智能摘要目前还没有用在这里，只是先用简单兜底策略保证不超预算；后续如果发现频繁触发 Compress，值得替换成真正的 LLM 摘要压缩
 
+## ReAct 阶段（vuln_analysis/exploitation/post_exploitation）× Context/Memory 融合设计
 
+> `ContextBuilder`（GSSC 流水线）和 `MemoryExtractor`（事件触发抽取）此前只在 `agent/MetaspolitSimpleAgent.py`（文本正则式工具调用，非 Function Calling）里接了一半。`agent/post_recon_react_agent.py::PostReconReActAgent` 对应 PTES 除侦察外的三个阶段（威胁建模/漏洞分析 → 利用 → 后渗透），按本文档已确定的架构分工（ReAct 负责这三个阶段共通的 Thought→Action→Observation 循环），恰恰是最需要记忆系统的地方——一次失败的 exploit 尝试不能被遗忘、凭据要能跨 host 追溯、tech_fail/op_fail 要分清。本节记录如何让这两套系统与 ReAct 循环融合，并同步记录已落地的实现（`agent/post_recon_react_agent.py`、`core/agent.py`）。
+
+### 阶段范围：从「仅利用阶段」扩展为 vuln_analysis/exploitation/post_exploitation 三阶段共用一个 Agent
+
+- 最初落地时这个类叫 `ExploitReActAgent`，system prompt 里写死「当前处于 PTES 方法论的「利用」（Exploitation）阶段」，只覆盖 PTES 四阶段中的一个。
+- **为什么合并**：按「Paradigms Chosen」一节的架构分工，vuln_analysis/exploitation/post_exploitation 三个阶段本来就都该用 ReAct（只有 recon 用 Plan-and-Solve）；且这个 Agent 本身不像 `PlanSolveAgent.Executor` 那样在代码里按阶段过滤工具（`search_module`/`get_module_info`、`run_module`/`set_option`、`execute_session`/`shell_upgrade` 等工具本来就注册在同一个 `ToolRegistry` 里，没有代码层面的阶段隔离），实际的阶段边界一直只靠 system prompt 文案约束——把三个阶段的文案都交给同一个类管理，比为每个阶段各开一个几乎同构的 Agent 子类更省重复代码。
+- **怎么做**：`EXPLOIT_REACT_SYSTEM_PROMPT` 从一份固定文本改成 `POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE` + `_PHASE_INFO`（`{phase: {display_name, guidance}}`）字典；`_build_phase_system_prompt()` 在每次 `run()` 时按当时的 `self.state.ptes_phase` 现算对应措辞（未识别的阶段兜底退化为 `vuln_analysis`，即本 Agent 负责的第一个阶段）。构造时如果显式传入 `system_prompt`，则固定使用该文本、不再随阶段变化，供只想跑单一阶段的调用方使用。类名/文件名同步从 `ExploitReActAgent`/`agent/exploit_react_agent.py` 改为 `PostReconReActAgent`/`agent/post_recon_react_agent.py`。
+- **阶段切换机制不变**：评估过"单次 `run()` 内部让 LLM 自主判断何时从 vuln_analysis 推进到 exploitation 再到 post_exploitation"的方案（例如新增一个 AdvancePhase 工具），但这会削弱下一节「PTES phase 切换：触发权归编排层」这个既有安全设计——渗透测试里"要不要真的开始打这个漏洞""建立 session 后要不要继续深入"这类决策，希望编排层（或人工）在场，而不是完全交给模型在一次不间断的循环里自行决定。因此仍然沿用"编排层在阶段边界调用 `set_ptes_phase()`，再用同一个 Agent 实例重新调用 `run()`"的模式，只是现在编排层要在三个阶段边界都这样做，而不是只在进入/离开 exploitation 时做一次。
+
+### 融合的基本原则：初始 Framing 用 ContextBuilder，循环内连续性用原生 messages
+
+- ReAct 的 Thought→Action→Observation 循环在单次 `run()` 内部依赖 OpenAI Function Calling 协议维持的 `messages` 数组（assistant 的 `tool_calls` 必须紧跟对应 `tool_call_id` 的 `tool` 角色消息）——这段短期连续性不能也不需要被 `ContextBuilder` 取代。
+- `ContextBuilder.build()` 的角色是**任务开始前的一次性 framing**：`PostReconReActAgent._build_initial_messages` 在 `run()` 最开始调用它，把 `AgentState`、`engagement_id` 传进去，取回结构化的 `[State]/[Evidence]/[Context]/[Output]` 文本作为 user 角色的首条消息内容，让 LLM 在第一步 Thought 之前就看到本次 engagement 已发现的资产/凭据（episodic `task_state`）和相关经验（semantic `related_memory`）。
+- **实现细节**：`system_prompt` 仍然独立作为 system 角色消息（角色/策略约束不变），调用 `ContextBuilder.build()` 时故意把 `system_instructions` 传 `None`——如果连同 `system_prompt` 一起传给 `ContextBuilder`，会在返回文本的 `[Role & Policies]` 分区里把角色设定重复注入一遍，浪费 token 预算。
+- 不需要每一步循环都重新调用 `ContextBuilder.build()`——那样会导致 token 预算迅速超支，且和 Function Calling 的多轮协议冲突。循环内临时需要再查一次记忆的需求，交给下一节。
+
+### 循环内的按需检索：MemoryTool 是一个普通工具，不是每步重跑 GSSC
+
+- `tools/builtin/memory_tool.py::MemoryTool` 本身就是一个 `BaseTool`，注册进 `PostReconReActAgent` 的 `tool_registry` 后，和 `search_module`/`run_module` 等业务工具没有区别——不需要任何额外接线代码。
+- LLM 在 ReAct 循环中间如果需要临时确认"这个漏洞点是不是之前试过"，可以像调用其他工具一样主动调用 `memory(action=search, ...)`，产生一次 Action→Observation，符合 ReAct 自身的推理节奏。`POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE` 里补充了「记忆工具的使用」一节，明确告诉模型这个能力的存在与用法。
+- 分工边界很明确：`ContextBuilder` 负责"任务开始时框架性地把已知信息摆在桌面上"，`MemoryTool` 负责"循环中 LLM 觉得需要时主动查"。两者不重叠、不冲突。
+
+### Observation → Memory 写入：每次工具结果之后无条件走 MemoryExtractor
+
+- `PostReconReActAgent._run_impl` 里，每次业务工具执行完（拿到 `result_text` 之后、追加进 `messages` 之前），都会调用 `self._record_tool_observation(...)`。
+- **实现落地**：这段"懒加载 MemoryExtractor + 调用 log_working_memory/maybe_extract_episodic"的逻辑没有直接写在 `PostReconReActAgent` 里，而是提炼成了 `core/agent.py::Agent._get_memory_extractor` / `Agent._record_tool_observation` 两个基类方法（见本节末尾「复用点」）。
+- **调用规范**：传给 `_record_tool_observation` 的 `output` 是工具的完整原始结果文本（`result_text = str(result.output) if result.success else ...`），不做任何截断/摘要——`memory/extraction.py::_judge_episodic_event` 判断 tech_fail vs op_fail 的依据往往就在具体报错文本里，提前摘要会让 LLM judge 丢失分类依据。
+- tech_fail/op_fail 的区分逻辑本身不需要在 `PostReconReActAgent` 里重新实现，已经在 `_EPISODIC_JUDGE_PROMPT` 里完整实现。
+
+### target_ref 要落到 host 粒度，不能照抄 `state.target.address`
+
+- `PostReconReActAgent._extract_target_ref` 优先从当前工具调用的实际参数（`RHOSTS`/`RHOST`/`target`/`host`/`ip`/`address` 等常见 key，覆盖 `run_module`/`set_option` 等工具的标准选项名）里提取具体 host 地址，取不到才兜底退回 `state.target.address`。
+- 原因：exploitation/post_exploitation 阶段的因果链（凭据取自主机 A、用于登录主机 B）天然是 host 级别的，如果 `target_ref` 统一退化成顶层 target 地址，会丢失这个粒度，`causal_ref` 也失去意义。
+
+### Causal chain：从"状态自动追踪"调整为"LLM 驱动 + memory_id 可见"
+
+- 最初设想的实现路径是纯状态驱动：给 `Credential`/`Session` 加 `origin_memory_id` 字段，在 `state.target.sessions`/`credentials` 前后 diff 出新增对象时自动同步写入并回填该字段，`causal_ref` 完全由 Agent 自己在 state 里追踪出来，不靠 LLM 猜。
+- **为什么没有按这个路径完整实现**：核对代码后发现这条路径依赖的上游数据目前并不可靠——`metasploit/session.py::SessionsAPI.list()` 返回的是原始 RPC `dict`，而不是 `agent/models.py::Session` 结构化实例；`tools/builtin/list_sessions.py` 把这个 dict 直接整体赋给 `state.target.sessions`（每次调用整体覆盖，不是增量更新），且 `AgentState.target` 默认是 `None`。当前工具集里也没有任何一个"凭据发现"工具会产出 `Credential` 对象。在这些基础设施没有补齐之前，做"diff state 里的 Session/Credential 对象"这一步只是在一个不可靠的数据源上叠加一层同样不可靠的因果推断，不如不做。
+- **实际采用的方案**：`origin_memory_id` 字段本身仍然按原计划加到了 `Credential`/`Session`（`agent/models.py`），作为面向未来的数据模型钩子；但因果链的**触发**改为 LLM 驱动——
+    1. `tools/builtin/memory_tool.py::_search_memory` 的每条结果现在会带上完整的 `memory.id`（此前只在内容预览里看不到 id）；`_add_memory` 的确认文本也从截断的 `ID: {memory_id[:8]}...` 改成完整的 `ID: {memory_id}`。
+    2. `POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE` 明确指引模型：记录一条新的 episodic 事件（如"用凭据 X 登录了主机 B"）时，如果这个事件依赖于之前已经见过的某条记忆（如"凭据 X 发现于主机 A"的搜索结果或写入确认里的 id），把该 id 通过 `causal_ref` 参数带上，并强调"不要自己编造 id"。
+- 这个方案牺牲了"完全确定性"（依赖 LLM 正确复述 id），换来的是**现在就能跑通**，且不依赖尚未存在的凭据发现工具或尚未修复的 session 数据管道。等 `list_sessions`/凭据工具把结构化的 `Session`/`Credential` 对象真正接上 `state.target` 之后，最初设想的状态驱动路径可以作为更精确的补充机制叠加上去（`origin_memory_id` 字段已经就位，不需要再改数据模型）。
+
+### PTES phase 切换：触发权归编排层，Agent 只暴露 hook
+
+- `core/agent.py::Agent.set_ptes_phase(state, new_phase, target_ref)` / `Agent.finalize_engagement(state, phases, target_ref)` 是两个通用的基类方法（不假设 `self.state` 存在，`state` 由调用方显式传入），内部调用 `MemoryExtractor.consolidate_phase_async`/`finalize_engagement` 完成阶段边界触发的 semantic 归纳。
+- `PostReconReActAgent.set_ptes_phase(new_phase)` / `finalize_engagement()` 是对应的薄封装，自动把 `self.state` 和当前 `target_ref` 传进去，对外保持和 `MetaspolitSimpleAgent` 一致的调用方式。
+- `PostReconReActAgent` 不会在 `run()` 内部自动判断"现在是不是该切阶段了"——它可能被上层多次调用，每次只负责当前一步任务（vuln_analysis/exploitation/post_exploitation 三者之一），阶段切换的触发时机留给编排层（未来的顶层 orchestrator，或当前调用方脚本）显式调用这两个方法。
+
+### `⚠️ REPLAN_NEEDED` 信号要同时落一条 episodic 记忆
+
+- `POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE` 新增「计划偏差上报」约定，与 `RECON_EXECUTOR_SYSTEM_PROMPT` 保持一致的标记格式：模型在 `Finish` 的 `answer` 开头加 `⚠️ REPLAN_NEEDED: <原因>`。
+- `_run_impl` 在算出 `final_answer` 后检查这个前缀，命中则调用 `_record_replan_signal`，**同步**（不经过 `maybe_extract_episodic` 的异步 LLM 判断）写一条 `event_type=defense_observed` 的 episodic 记忆，`content` 前缀按 `self.state.ptes_phase` 从 `_PHASE_INFO` 取当前阶段的中文名（"威胁建模/漏洞分析阶段计划偏差: ..."/"利用阶段计划偏差: ..."/"后渗透阶段计划偏差: ..."），不再像单一阶段时那样写死"利用阶段"。之所以不走异步判断路径：这个信号本身已经是 LLM 明确判断过的"计划失效"事实，不需要再让另一个 LLM 判断"这算不算一个事件"；同步写入也保证这条记录在 `run()` 返回前就已经落库。
+
+### Token 预算分工：ContextBuilder 的压缩策略不覆盖 ReAct 循环内的增长
+
+- `ContextBuilder._compress()` 目前是"超预算就硬截断"（见上「Compress」小节），这是已知局限，非高保真摘要。
+- `ContextBuilder.build()` 只在 `run()` 开始时调用一次，只压缩它自己生成的那段初始 framing 文本；循环内 `messages` 的增长交给 `max_steps` 上限 + 达到上限后的兜底收尾（`_run_impl` 里 `final_answer is None` 时退回一次不带工具的 `llm.invoke`），而不是无限增长。循环内高保真压缩留作后续 Context Engineering 优化项。
+
+### 复用点：三个 Agent 共用同一套记忆接线方法
+
+- `_extract_memories`/`_get_memory_extractor` 这套逻辑原来写死在 `MetaspolitSimpleAgent` 一个类里。落地时把它提炼成了 `core/agent.py::Agent` 基类上的共享方法：
+    - `Agent._get_memory_extractor()`：懒加载 `MemoryExtractor`，复用 `tool_registry.get_tool("memory")` 拿到的 `MemoryManager`。
+    - `Agent._record_tool_observation(tool_name, arguments, output, tool_success, target_ref, phase, session_id)`：统一的"写 working + 触发 episodic"入口。
+    - `Agent.set_ptes_phase(state, new_phase, target_ref)` / `Agent.finalize_engagement(state, phases, target_ref)`：见上一节。
+- `MetaspolitSimpleAgent` 和 `PostReconReActAgent` 都只负责各自"怎么算出 `target_ref`"（前者用 `state.target.address`，后者按 host 粒度提取，见前文），懒加载与写入路径完全共用，不再各写一份。
+- 这几个方法都不假设 `self.state` 存在（`state`/`target_ref` 由调用方显式传入），所以不依赖记忆系统的 Agent（如纯对话的 `SimpleAgent`）不受影响，`Agent.__init__` 也只新增了 `self.engagement_id = None` 和 `self._memory_extractor = None` 两个属性，不改变任何现有构造函数签名。
+
+## 侦察阶段 Plan-and-Solve × Context/Memory 融合设计
+
+> 同一套融合思路（ContextBuilder 做一次性 framing、Observation 无条件写记忆、REPLAN_NEEDED 落记忆、phase 切换 hook、共用基类方法）落地到 `agent/reconnaissance_planandsolve_agent.py::PlanSolveAgent`（PTES 侦察阶段，`Planner` + `Executor` 两段式）。落地过程中顺带修好了 `Executor._execute_step` 里"临时借用一个 `SimpleAgent` 实例复用工具调用逻辑"的 hack——那条路径依赖的 `SimpleAgent._build_tool_schemas`/`_execute_tool_call` 两个方法在仓库里根本不存在，之前是完全跑不通的死代码。
+
+### 和 ReAct 的关键差异：Plan-and-Solve 每一步都是从零构建的独立 messages
+
+- ReAct 的融合设计能"只在 run() 开始时调用一次 ContextBuilder"，是因为循环内的连续性由 Function Calling 协议维持的 `messages` 数组负责——后续步骤天然能看到前面的内容。
+- Plan-and-Solve 不是这样：`Executor.execute()` 里每一步都会重新拼一个全新的 `messages`（`system_prompt` + 手工格式化的 `context` 字符串，包含原始问题/完整计划/历史步骤结果/当前步骤），互相之间没有共享的对话状态。
+- 因此"只查一次记忆"的原则在这里换了一种实现方式：`PlanSolveAgent.run()` 在最开始调用一次 `_build_memory_context()`，把返回的 `memory_context` 字符串分别传给 `Planner.plan()`（生成计划前看一眼，用于规划阶段避免安排重复扫描）和 `Executor.execute()`（原样透传，由 `Executor` 在**每一步**的 `context` 拼接里重复嵌入同一份文本）。是"只查一次、多处复用同一份结果"，不是"只让第一步看到"。
+
+### Planner 侧：memory_context 作为规划前的独立 user 轮次
+
+- `Planner.plan()` 新增 `memory_context` 参数，构造 messages 时插在 `system_prompt` 和"请为以下问题生成详细的执行计划"之间，作为独立的一条 user 消息，不与问题文本拼接在一起。
+- `Planner` 本身不需要、也不能接入 Function Calling 意义上的 `memory` 工具调用——它的 `tool_choice` 被强制指定为 `generate_plan`（`{"type": "function", "function": {"name": "generate_plan"}}`），单次请求内无法先调用 `memory` 再被强制调用 `generate_plan`。ContextBuilder 的一次性预取，就是这里"规划前查记忆"的唯一入口。
+
+### Executor 侧：直接用 ToolRegistry，不再借用 SimpleAgent
+
+- 原实现在 `_execute_step` 里 `from .simple_agent import SimpleAgent` 临时构造一个 `temp_agent`，调用 `temp_agent._build_tool_schemas()` / `temp_agent._execute_tool_call()`——这两个方法在 `SimpleAgent` 类里都不存在，属于之前从未跑通过的死代码。
+- 现在改为直接调用 `self.tool_registry.to_function_schemas()`（见上文「复用点」，与 `PostReconReActAgent` 共用同一个 `ToolRegistry` 方法）构建 schema，以及 `self.tool_registry.execute_tool(tool_name, state, **arguments)` 执行工具，不再需要借助任何 Agent 实例。
+- `state: AgentState` 现在被显式一路透传：`PlanSolveAgent.run()` → `Executor.execute(question, plan, state, ...)` → `_execute_step(context, state, ...)` → `execute_tool(tool_name, state, ...)`。此前 `Executor` 根本不持有/不传递 `state`，`nmap_scan` 等工具的 `state` 形参永远收到 `None`。
+
+### Observation → Memory 写入：回调而不是直接继承
+
+- `Executor` 不是 `Agent` 子类（它是 `PlanSolveAgent` 内部的纯协作对象，没有 `tool_registry`/`llm` 之外的 Agent 语义），不能直接调用 `Agent._record_tool_observation`。
+- 设计上用一个回调解耦：`Executor.__init__` 新增 `on_tool_observation: Optional[Callable[[str, Dict, str, bool], None]]` 参数，`PlanSolveAgent.__init__` 构造 `Executor` 时把 `self._on_tool_observation` 传进去；每次工具执行完，`Executor._execute_step` 调用这个回调，`PlanSolveAgent._on_tool_observation` 再转手调用继承自 `Agent` 基类的 `_record_tool_observation`。
+- `target_ref` 提取按侦察阶段实际的工具集调整：`nmap_scan` 的目标参数名是 `target`（而不是利用阶段 `run_module`/`set_option` 用的 `RHOSTS`），`PlanSolveAgent._extract_target_ref` 按 `("target", "TARGET", "host", "ip", "address", "RHOSTS")` 的顺序尝试提取，取不到才兜底到 `state.target.address`。
+
+### `⚠️ REPLAN_NEEDED` 落记忆：event_type 用 `recon_negative`
+
+- `RECON_EXECUTOR_SYSTEM_PROMPT` 本来就已经有这个标记的书面约定（"目标不可达、出现计划外的主机/服务"等），但此前代码里没有任何地方真正检查这个前缀、做点什么——只是写在提示词里但没人消费。
+- `PlanSolveAgent.run()` 在 `executor.execute()` 返回后检查 `final_answer` 是否以 `⚠️ REPLAN_NEEDED:` 开头，命中则调用 `_record_replan_signal`，同步写一条 episodic 记忆。
+- `event_type` 选择 `recon_negative` 而不是利用阶段用的 `defense_observed`：侦察阶段的偏差通常是"预期的资产/结果没有按计划出现"（目标不可达、扫描到计划外网段等），语义上更贴近"侦察阶段的阴性/异常结果"这个既有分类，而不是"遭遇主动防御"。
+
+### 记忆工具的使用：从"禁止列表"到"允许列表"外单独说明
+
+- `RECON_EXECUTOR_SYSTEM_PROMPT` 原本只有一份利用类工具的禁止清单。新增的「记忆工具的使用」一节明确 `memory` 工具不在禁止之列，并给出侦察阶段的具体理由：查询目标是否已经扫描过，避免对同一目标重复执行有真实网络开销的扫描——这是侦察阶段区别于利用阶段的记忆使用场景（利用阶段更强调 `causal_ref` 因果链，侦察阶段更强调"别重复扫"）。
+
+### 未覆盖范围：`arun_stream`
+
+- `PlanSolveAgent.arun_stream` 是一条独立于 `Planner`/`Executor` 的流式实现，直接用 `self.llm.astream_invoke` 手写 prompt，本身不支持 Function Calling / 工具调用（预先存在的限制）。这次只把 `_build_memory_context()` 的结果一次性嵌入了规划提示与每一步的执行提示，让这条路径也有"背景信息"，但没有为它补上工具调用能力——那是比这次融合范围更大的独立缺口，留待后续单独处理。
 

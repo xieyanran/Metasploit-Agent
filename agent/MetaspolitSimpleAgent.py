@@ -7,7 +7,6 @@ from core.llm import PentestAgentLLM
 from agent.simple_agent import SimpleAgent
 from agent.state import AgentState
 from tools.registry import ToolRegistry
-from memory.extraction import MemoryExtractor
 import re
 
 # PTES阶段边界，用于engagement结束时的兜底归纳（DESIGN.md: Semantic memory时机设计）
@@ -34,8 +33,8 @@ class MetasploitSimpleAgent(SimpleAgent):
         # 需要在多次工具调用之间持久化，而不是每次调用临时创建
         self.state = AgentState()
         # engagement_id绑定本次agent进程生命周期，用于episodic/semantic记忆的项目级隔离
-        self._engagement_id = f"engagement_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self._memory_extractor: Optional[MemoryExtractor] = None
+        # （_memory_extractor懒加载逻辑已提炼到Agent基类，见core/agent.py::_get_memory_extractor）
+        self.engagement_id = f"engagement_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         print(f"✅ {name} 初始化完成，工具调用: {'启用' if self.enable_tool_calling else '禁用'}")
 
     def run(self, input_text: str, max_tool_iterations: int = 3, **kwargs) -> str:
@@ -191,39 +190,20 @@ class MetasploitSimpleAgent(SimpleAgent):
     def _extract_memories(self, tool_name: str, parameters: str, output: str) -> None:
         """触发本轮工具调用对应的记忆写入：working memory自动直写 + episodic事件触发抽取
 
-        两者"什么时候写、写什么"的规则统一由MemoryExtractor维护（memory/extraction.py），
-        这里只负责把当前Agent状态（target/phase）喂给它。
+        实际的懒加载/写入逻辑已提炼到Agent基类的_record_tool_observation（三类Agent共用，
+        见docs/DESIGN.md「复用点：避免三个Agent各写一套记忆接线代码」），这里只负责把
+        本Agent当前状态（target/phase）转换成该方法需要的参数。
         """
-        extractor = self._get_memory_extractor()
-        if extractor is None:
-            return
-
-        extractor.log_working_memory(tool_name, parameters, output)
-
         target_ref = self.state.target.address if self.state.target else None
         success = not output.startswith("❌")
-        extractor.maybe_extract_episodic(
+        self._record_tool_observation(
             tool_name=tool_name,
-            output_text=output,
+            arguments=parameters,
+            output=output,
             tool_success=success,
             target_ref=target_ref,
             phase=self.state.ptes_phase,
         )
-
-    def _get_memory_extractor(self) -> Optional[MemoryExtractor]:
-        """懒加载MemoryExtractor：复用MemoryTool已初始化的MemoryManager，绑定当前engagement/LLM"""
-        if not self.tool_registry:
-            return None
-        memory_tool = self.tool_registry.get_tool("memory")
-        if memory_tool is None:
-            return None
-        if self._memory_extractor is None:
-            self._memory_extractor = MemoryExtractor(
-                memory_manager=memory_tool.memory_manager,
-                llm=self.llm,
-                engagement_id=self._engagement_id,
-            )
-        return self._memory_extractor
 
     def set_ptes_phase(self, new_phase: str) -> None:
         """PTES阶段切换：先对上一阶段积累的episodic memory做一次归纳，再切换阶段
@@ -231,21 +211,13 @@ class MetasploitSimpleAgent(SimpleAgent):
         调用方（编排层/规划agent）在检测到recon->vuln_analysis->exploitation->
         post_exploitation的阶段转换时调用，对应DESIGN.md的semantic memory时机设计。
         """
-        old_phase = self.state.ptes_phase
-        if old_phase == new_phase:
-            return
-        extractor = self._get_memory_extractor()
-        if extractor is not None:
-            target_ref = self.state.target.address if self.state.target else None
-            extractor.consolidate_phase_async(old_phase, target_ref)
-        self.state.ptes_phase = new_phase
+        target_ref = self.state.target.address if self.state.target else None
+        super().set_ptes_phase(self.state, new_phase, target_ref)
 
     def finalize_engagement(self) -> None:
         """engagement结束兜底：确保PTES各阶段积累的episodic memory都至少归纳过一次semantic memory"""
-        extractor = self._get_memory_extractor()
-        if extractor is not None:
-            target_ref = self.state.target.address if self.state.target else None
-            extractor.finalize_engagement(phases=_PTES_PHASES, target_ref=target_ref)
+        target_ref = self.state.target.address if self.state.target else None
+        super().finalize_engagement(self.state, phases=_PTES_PHASES, target_ref=target_ref)
 
     def _parse_tool_parameters(self, tool_name: str, parameters: str) -> dict:
         """智能解析工具参数"""

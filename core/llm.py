@@ -4,7 +4,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 from typing import Optional, Iterator, List, Dict, Union, Any, AsyncIterator
-from .llm_response import LLMResponse, LLMToolResponse
+from .llm_response import LLMResponse, LLMToolResponse, ToolCall
 
 # 加载 .env 文件中的环境变量
 load_dotenv()
@@ -261,16 +261,42 @@ class PentestAgentLLM:
         Raises:
             HelloAgentsException: 当 LLM 调用失败时
         """
-        # 合并参数
-        call_kwargs = {
-            "temperature": kwargs.pop("temperature", self.temperature),
-            "tool_choice": tool_choice,
-        }
-        if self.max_tokens:
-            call_kwargs["max_tokens"] = kwargs.pop("max_tokens", self.max_tokens)
+        # 直接复用invoke()已验证可用的self.client（OpenAI兼容客户端），非流式调用；
+        # 不依赖self._adapter——原因同invoke()方法上的注释：_adapter是参考项目
+        # HelloAgents里的适配器抽象层，本项目从未移植、__init__也从未初始化过，
+        # self.temperature/self.max_tokens同样不存在，调用必然抛AttributeError
+        temperature = kwargs.pop("temperature", 0)
+        max_tokens = kwargs.pop("max_tokens", None)
+        call_kwargs = {"temperature": temperature, "tool_choice": tool_choice}
+        if max_tokens:
+            call_kwargs["max_tokens"] = max_tokens
         call_kwargs.update(kwargs)
 
-        return self._adapter.invoke_with_tools(messages, tools, **call_kwargs)
+        start = time.monotonic()
+        response = self.client.chat.completions.create(
+            model=self.model, messages=messages, tools=tools, stream=False, **call_kwargs
+        )
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        message = response.choices[0].message
+        usage = response.usage
+        raw_tool_calls = message.tool_calls or []
+        tool_calls = [
+            ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+            for tc in raw_tool_calls
+        ]
+
+        return LLMToolResponse(
+            content=message.content,
+            tool_calls=tool_calls,
+            model=response.model or self.model,
+            usage={
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            } if usage else {},
+            latency_ms=latency_ms,
+        )
 
 # --- 客户端使用示例 ---
 if __name__ == '__main__':
