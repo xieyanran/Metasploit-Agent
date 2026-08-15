@@ -1,6 +1,6 @@
 """
 ReAct Agent - 基于 Function Calling 的实现，覆盖 PTES 除侦察外的三个阶段
-（vuln_analysis / exploitation / post_exploitation）
+（Threat Modeling/Vulnerability Analysis / exploitation / post_exploitation）
 Reference: https://github.com/jjyaoao/HelloAgents/blob/main/hello_agents/agents/react_agent.py
 """
 import json
@@ -19,7 +19,7 @@ from context.builder import ContextBuilder
 # PTES阶段边界，用于engagement结束时的兜底归纳（DESIGN.md: Semantic memory时机设计）
 _PTES_PHASES = ["recon", "vuln_analysis", "exploitation", "post_exploitation"]
 
-# 本Agent实际负责的三个阶段是vuln_analysis/exploitation/post_exploitation
+# 本Agent实际负责的三个阶段是Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation
 # （recon由PlanSolveAgent负责，见agent/reconnaissance_planandsolve_agent.py）。编排层
 # 在阶段边界调用set_ptes_phase()切换state.ptes_phase后，用同一个Agent实例再次调用
 # run()，_build_phase_system_prompt()据此按阶段生成不同措辞的system prompt——阶段切换
@@ -52,7 +52,7 @@ _PHASE_INFO: Dict[str, Dict[str, str]] = {
     "exploitation": {
         "display_name": "利用（Exploitation）",
         "guidance": (
-            "针对上一阶段（vuln_analysis）确定的候选模块，配置并执行实际的漏洞利用（如 "
+            "针对上一阶段（Threat Modeling/Vulnerability Analysis）确定的候选模块，配置并执行实际的漏洞利用（如 "
             "set_option/show_option/run_module/compatible_payloads），建立可用的 session。失败时结合"
             "报错信息判断是否需要更换模块/载荷，仍无法达成时按「计划偏差上报」约定上报，而不是无限重试。"
         ),
@@ -117,7 +117,7 @@ POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE = """你是一个具备推理和行动�
 class PostReconReActAgent(Agent):
     """
     ReAct Agent - 基于 Function Calling 的推理与行动，覆盖 PTES 除侦察外的三个阶段
-    （vuln_analysis / exploitation / post_exploitation）
+    （Threat Modeling/Vulnerability Analysis / exploitation / post_exploitation）
 
     核心改进：
     - 使用 Function Calling（结构化输出）
@@ -160,7 +160,7 @@ class PostReconReActAgent(Agent):
             max_steps: 最大执行步数
             state: 贯穿本次任务的运行状态；不传则新建一个空的AgentState。由编排层在
                 跨阶段调用多个Agent时传入同一个state，才能让target/凭据/PTES阶段在
-                recon->vuln_analysis->exploitation->post_exploitation之间保持连续
+                recon->Threat Modeling/Vulnerability Analysis->exploitation->post_exploitation之间保持连续
             engagement_id: 项目级作用域标识，episodic记忆检索的唯一安全边界；不传则按
                 当前时间自动生成一个（与MetaspolitSimpleAgent的做法一致）
         """
@@ -233,6 +233,7 @@ class PostReconReActAgent(Agent):
             最终答案
         """
         # 构建消息列表（首条消息由ContextBuilder的GSSC流水线生成，见_build_initial_messages）
+        # 准备接段: build context
         messages = self._build_initial_messages(input_text)
 
         # 构建工具 schemas（包含内置工具和用户工具）
@@ -250,7 +251,9 @@ class PostReconReActAgent(Agent):
             print(f"\n--- 第 {current_step} 步 ---")
 
             # 调用 LLM（Function Calling）
+            # 进入循环
             try:
+                # 隐式推理
                 response = self.llm.invoke_with_tools(
                     messages=messages,
                     tools=tool_schemas,
@@ -308,7 +311,7 @@ class PostReconReActAgent(Agent):
                     })
                     continue
 
-                # 内置工具：Thought 仅记录推理，不产生外部效果
+                # 内置工具：Thought 仅记录推理，不产生外部效果，显式的吐出来
                 if tool_name == "Thought":
                     reasoning = arguments.get("reasoning", "")
                     print(f"💭 {reasoning}")
@@ -319,7 +322,7 @@ class PostReconReActAgent(Agent):
                     })
                     continue
 
-                # 内置工具：Finish 结束整个流程
+                # 内置工具：Finish 结束整个流程（Action)
                 if tool_name == "Finish":
                     final_answer = arguments.get("answer", "")
                     print(f"✅ 完成: {final_answer}")
@@ -331,7 +334,7 @@ class PostReconReActAgent(Agent):
                     finished = True
                     break
 
-                # 业务工具：统一走 ToolRegistry
+                # 业务工具：统一走 ToolRegistry (Action)
                 print(f"🔧 调用工具: {tool_name}({arguments})")
                 result = self.tool_registry.execute_tool(tool_name, self.state, **arguments)
                 result_text = str(result.output) if result.success else f"❌ {result.message or result.output}"
@@ -349,6 +352,7 @@ class PostReconReActAgent(Agent):
                     session_id=self.engagement_id,
                 )
 
+                # Observation
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
@@ -395,12 +399,12 @@ class PostReconReActAgent(Agent):
     def _build_phase_system_prompt(self) -> str:
         """按self.state.ptes_phase生成当前阶段的system prompt文本。
 
-        本Agent同一个实例要跨vuln_analysis/exploitation/post_exploitation三个阶段被
+        本Agent同一个实例要跨Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation三个阶段被
         编排层复用（每次run()前编排层调用set_ptes_phase()切阶段），所以system prompt
         不能在构造期固定死一份文本，必须在每次run()时按当时的state.ptes_phase现算。
 
         state.ptes_phase取不到已知阶段时（例如编排层还没有切出recon默认值就调用了
-        本Agent），退化为_DEFAULT_PHASE（vuln_analysis，本Agent负责的第一个阶段）而
+        本Agent），退化为_DEFAULT_PHASE（Threat Modeling/Vulnerability Analysis，本Agent负责的第一个阶段）而
         不是报错——沿用整个融合设计"记忆/框架相关的辅助信息缺失时退化，不阻塞任务"的
         一贯原则，具体见docs/DESIGN.md「PTES phase 切换：触发权归编排层，Agent只暴露
         hook」。
@@ -416,6 +420,7 @@ class PostReconReActAgent(Agent):
 
         system角色内容：构造时传了固定system_prompt则原样使用（不随阶段变化，适合
         单阶段调用方）；没传则每次都用_build_phase_system_prompt()按当前阶段现算。
+        
         user角色内容改由ContextBuilder的GSSC流水线生成——把本次engagement已发现的
         资产/凭据（episodic task_state）和相关经验（semantic related_memory）在第一步
         Thought之前就摆在LLM面前，而不是像过去那样只给一句裸的input_text。
@@ -468,7 +473,7 @@ class PostReconReActAgent(Agent):
         return None
 
     def _record_replan_signal(self, final_answer: str) -> None:
-        """把本Agent所处阶段（vuln_analysis/exploitation/post_exploitation之一）的
+        """把本Agent所处阶段（Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation之一）的
         计划偏差信号（⚠️ REPLAN_NEEDED）落一条episodic记忆。
 
         直接同步写入，不走maybe_extract_episodic的异步LLM判断路径——这个信号本身已经
@@ -498,7 +503,7 @@ class PostReconReActAgent(Agent):
         )
 
     def set_ptes_phase(self, new_phase: str) -> None:
-        """供编排层调用：切换本次任务所处的PTES阶段（vuln_analysis/exploitation/
+        """供编排层调用：切换本次任务所处的PTES阶段（Threat Modeling/Vulnerability Analysis/exploitation/
         post_exploitation之间），触发对上一阶段episodic memory的归纳。触发时机由
         编排层决定，本Agent自己不会在run()内部自动调用（见docs/DESIGN.md「PTES
         phase切换：触发权归编排层，Agent只暴露hook」）。

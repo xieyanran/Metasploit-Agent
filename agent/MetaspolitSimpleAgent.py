@@ -208,7 +208,7 @@ class MetasploitSimpleAgent(SimpleAgent):
     def set_ptes_phase(self, new_phase: str) -> None:
         """PTES阶段切换：先对上一阶段积累的episodic memory做一次归纳，再切换阶段
 
-        调用方（编排层/规划agent）在检测到recon->vuln_analysis->exploitation->
+        调用方（编排层/规划agent）在检测到recon->Threat Modeling/Vulnerability Analysis->exploitation->
         post_exploitation的阶段转换时调用，对应DESIGN.md的semantic memory时机设计。
         """
         target_ref = self.state.target.address if self.state.target else None

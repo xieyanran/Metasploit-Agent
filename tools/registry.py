@@ -70,7 +70,7 @@ class ToolRegistry:
     def to_function_schemas(self) -> List[Dict[str, Any]]:
         """把所有已注册的Tool对象转换成OpenAI Function Calling的tools schema列表。
 
-        提炼出来的共用方法：PostReconReActAgent（vuln_analysis/exploitation/
+        提炼出来的共用方法：PostReconReActAgent（Threat Modeling/Vulnerability Analysis/exploitation/
         post_exploitation三阶段共用的ReAct循环）和
         Reconnaissance_planandsolve_agent.py::Executor（侦察阶段Plan-and-Solve的
         逐步执行器）都需要"把注册表里的工具转成Function Calling schema"这个能力，

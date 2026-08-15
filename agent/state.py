@@ -22,5 +22,5 @@ class AgentState:
     target: Target | None = None
     execution: ExecutionState = field(default_factory=ExecutionState)
     module: ModuleState = field(default_factory=ModuleState)
-    # PTES阶段：recon/vuln_analysis/exploitation/post_exploitation，
+    # PTES阶段：recon/Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation，
     ptes_phase: str = "recon"

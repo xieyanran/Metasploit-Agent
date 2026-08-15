@@ -107,7 +107,7 @@ firstpentestAgent/
 ├── agent/                          # Agent实现层
 │   ├── simple_agent.py              # SimpleAgent实现
 │   ├── reconnaissance_planandsolve_agent.py  # Plan-and-Solve，驱动侦察阶段
-│   ├── post_recon_react_agent.py    # ReAct，驱动vuln_analysis/exploitation/post_exploitation三阶段
+│   ├── post_recon_react_agent.py    # ReAct，驱动Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation三阶段
 │   ├── MetaspolitSimpleAgent.py
 │   ├── models.py                    # Agent数据模型
 │   └── state.py / state_manager.py  # Agent状态管理
@@ -420,16 +420,16 @@ firstpentestAgent/
     - 当前策略：按行贪心截断——逐行累加 token 数，一旦下一行会超预算就整体停止，保留已经拼接的完整行（不做行内截断），尽量维持已保留分区的结构完整性，而不是不看结构地砍到定长
     - 已知局限：这是"硬截断"而非"高保真摘要"，超出预算的内容是被整体丢弃而不是压缩保留要点——上面 Context Engineering 一节里 Compaction 提到的"让模型压缩并保留架构性决策"式的智能摘要目前还没有用在这里，只是先用简单兜底策略保证不超预算；后续如果发现频繁触发 Compress，值得替换成真正的 LLM 摘要压缩
 
-## ReAct 阶段（vuln_analysis/exploitation/post_exploitation）× Context/Memory 融合设计
+## ReAct 阶段（Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation）× Context/Memory 融合设计
 
 > `ContextBuilder`（GSSC 流水线）和 `MemoryExtractor`（事件触发抽取）此前只在 `agent/MetaspolitSimpleAgent.py`（文本正则式工具调用，非 Function Calling）里接了一半。`agent/post_recon_react_agent.py::PostReconReActAgent` 对应 PTES 除侦察外的三个阶段（威胁建模/漏洞分析 → 利用 → 后渗透），按本文档已确定的架构分工（ReAct 负责这三个阶段共通的 Thought→Action→Observation 循环），恰恰是最需要记忆系统的地方——一次失败的 exploit 尝试不能被遗忘、凭据要能跨 host 追溯、tech_fail/op_fail 要分清。本节记录如何让这两套系统与 ReAct 循环融合，并同步记录已落地的实现（`agent/post_recon_react_agent.py`、`core/agent.py`）。
 
-### 阶段范围：从「仅利用阶段」扩展为 vuln_analysis/exploitation/post_exploitation 三阶段共用一个 Agent
+### 阶段范围：从「仅利用阶段」扩展为 Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation 三阶段共用一个 Agent
 
 - 最初落地时这个类叫 `ExploitReActAgent`，system prompt 里写死「当前处于 PTES 方法论的「利用」（Exploitation）阶段」，只覆盖 PTES 四阶段中的一个。
-- **为什么合并**：按「Paradigms Chosen」一节的架构分工，vuln_analysis/exploitation/post_exploitation 三个阶段本来就都该用 ReAct（只有 recon 用 Plan-and-Solve）；且这个 Agent 本身不像 `PlanSolveAgent.Executor` 那样在代码里按阶段过滤工具（`search_module`/`get_module_info`、`run_module`/`set_option`、`execute_session`/`shell_upgrade` 等工具本来就注册在同一个 `ToolRegistry` 里，没有代码层面的阶段隔离），实际的阶段边界一直只靠 system prompt 文案约束——把三个阶段的文案都交给同一个类管理，比为每个阶段各开一个几乎同构的 Agent 子类更省重复代码。
+- **为什么合并**：按「Paradigms Chosen」一节的架构分工，Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation 三个阶段本来就都该用 ReAct（只有 recon 用 Plan-and-Solve）；且这个 Agent 本身不像 `PlanSolveAgent.Executor` 那样在代码里按阶段过滤工具（`search_module`/`get_module_info`、`run_module`/`set_option`、`execute_session`/`shell_upgrade` 等工具本来就注册在同一个 `ToolRegistry` 里，没有代码层面的阶段隔离），实际的阶段边界一直只靠 system prompt 文案约束——把三个阶段的文案都交给同一个类管理，比为每个阶段各开一个几乎同构的 Agent 子类更省重复代码。
 - **怎么做**：`EXPLOIT_REACT_SYSTEM_PROMPT` 从一份固定文本改成 `POST_RECON_REACT_SYSTEM_PROMPT_TEMPLATE` + `_PHASE_INFO`（`{phase: {display_name, guidance}}`）字典；`_build_phase_system_prompt()` 在每次 `run()` 时按当时的 `self.state.ptes_phase` 现算对应措辞（未识别的阶段兜底退化为 `vuln_analysis`，即本 Agent 负责的第一个阶段）。构造时如果显式传入 `system_prompt`，则固定使用该文本、不再随阶段变化，供只想跑单一阶段的调用方使用。类名/文件名同步从 `ExploitReActAgent`/`agent/exploit_react_agent.py` 改为 `PostReconReActAgent`/`agent/post_recon_react_agent.py`。
-- **阶段切换机制不变**：评估过"单次 `run()` 内部让 LLM 自主判断何时从 vuln_analysis 推进到 exploitation 再到 post_exploitation"的方案（例如新增一个 AdvancePhase 工具），但这会削弱下一节「PTES phase 切换：触发权归编排层」这个既有安全设计——渗透测试里"要不要真的开始打这个漏洞""建立 session 后要不要继续深入"这类决策，希望编排层（或人工）在场，而不是完全交给模型在一次不间断的循环里自行决定。因此仍然沿用"编排层在阶段边界调用 `set_ptes_phase()`，再用同一个 Agent 实例重新调用 `run()`"的模式，只是现在编排层要在三个阶段边界都这样做，而不是只在进入/离开 exploitation 时做一次。
+- **阶段切换机制不变**：评估过"单次 `run()` 内部让 LLM 自主判断何时从 Threat Modeling/Vulnerability Analysis 推进到 exploitation 再到 post_exploitation"的方案（例如新增一个 AdvancePhase 工具），但这会削弱下一节「PTES phase 切换：触发权归编排层」这个既有安全设计——渗透测试里"要不要真的开始打这个漏洞""建立 session 后要不要继续深入"这类决策，希望编排层（或人工）在场，而不是完全交给模型在一次不间断的循环里自行决定。因此仍然沿用"编排层在阶段边界调用 `set_ptes_phase()`，再用同一个 Agent 实例重新调用 `run()`"的模式，只是现在编排层要在三个阶段边界都这样做，而不是只在进入/离开 exploitation 时做一次。
 
 ### 融合的基本原则：初始 Framing 用 ContextBuilder，循环内连续性用原生 messages
 
@@ -469,7 +469,7 @@ firstpentestAgent/
 
 - `core/agent.py::Agent.set_ptes_phase(state, new_phase, target_ref)` / `Agent.finalize_engagement(state, phases, target_ref)` 是两个通用的基类方法（不假设 `self.state` 存在，`state` 由调用方显式传入），内部调用 `MemoryExtractor.consolidate_phase_async`/`finalize_engagement` 完成阶段边界触发的 semantic 归纳。
 - `PostReconReActAgent.set_ptes_phase(new_phase)` / `finalize_engagement()` 是对应的薄封装，自动把 `self.state` 和当前 `target_ref` 传进去，对外保持和 `MetaspolitSimpleAgent` 一致的调用方式。
-- `PostReconReActAgent` 不会在 `run()` 内部自动判断"现在是不是该切阶段了"——它可能被上层多次调用，每次只负责当前一步任务（vuln_analysis/exploitation/post_exploitation 三者之一），阶段切换的触发时机留给编排层（未来的顶层 orchestrator，或当前调用方脚本）显式调用这两个方法。
+- `PostReconReActAgent` 不会在 `run()` 内部自动判断"现在是不是该切阶段了"——它可能被上层多次调用，每次只负责当前一步任务（Threat Modeling/Vulnerability Analysis/exploitation/post_exploitation 三者之一），阶段切换的触发时机留给编排层（未来的顶层 orchestrator，或当前调用方脚本）显式调用这两个方法。
 
 ### `⚠️ REPLAN_NEEDED` 信号要同时落一条 episodic 记忆
 
