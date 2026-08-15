@@ -101,7 +101,7 @@ This agent will rely on its own custom-built framework for the time being, rathe
 
 一句话概括：Context Engineering 是通用的、面向单次推理的信息治理原则；Memory System 是在这个渗透测试场景下，把"哪些信息要跨会话留存"单独抽出来做的存储/检索/维护子系统——Memory 为 Context 提供长程知识，Context Engineering 反过来约束 Memory 输出的内容该以什么样子进入模型的推理窗口。
 
-## MetaspolitAgents Architecture(version 1.0.0)
+## MetaspolitAgent Architecture(version 1.0.0)
 ```
 firstpentestAgent/
 ├── agent/                          # Agent实现层
@@ -527,7 +527,7 @@ firstpentestAgent/
 
 - `RECON_EXECUTOR_SYSTEM_PROMPT` 原本只有一份利用类工具的禁止清单。新增的「记忆工具的使用」一节明确 `memory` 工具不在禁止之列，并给出侦察阶段的具体理由：查询目标是否已经扫描过，避免对同一目标重复执行有真实网络开销的扫描——这是侦察阶段区别于利用阶段的记忆使用场景（利用阶段更强调 `causal_ref` 因果链，侦察阶段更强调"别重复扫"）。
 
-### 未覆盖范围：`arun_stream`
+### 已删除：`arun_stream`
 
-- `PlanSolveAgent.arun_stream` 是一条独立于 `Planner`/`Executor` 的流式实现，直接用 `self.llm.astream_invoke` 手写 prompt，本身不支持 Function Calling / 工具调用（预先存在的限制）。这次只把 `_build_memory_context()` 的结果一次性嵌入了规划提示与每一步的执行提示，让这条路径也有"背景信息"，但没有为它补上工具调用能力——那是比这次融合范围更大的独立缺口，留待后续单独处理。
+- `PlanSolveAgent.arun_stream`（及 `SimpleAgent.arun_stream`）曾是一条独立于 `Planner`/`Executor` 的流式实现，直接调用 `self.llm.astream_invoke` 手写 prompt。但 `PentestAgentLLM`（`core/llm.py`）从未实现过 `astream_invoke` 这个方法，且全仓库没有任何调用方使用这两个 `arun_stream`——它们属于未完成、也从未被使用过的死代码，一调用就会因为方法不存在而 `AttributeError`。已连同相关的未使用 import（`StreamEvent`/`StreamEventType`/`AsyncGenerator`/`LifecycleHook`）一起删除；如果之后要做流式输出，建议基于已有的同步 `run()`/`invoke_with_tools()` 路径重新设计，而不是恢复这条半成品实现。
 

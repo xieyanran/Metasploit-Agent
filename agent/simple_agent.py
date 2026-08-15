@@ -4,15 +4,13 @@
 Reference: https://github.com/jjyaoao/HelloAgents/blob/main/hello_agents/agents/simple_agent.py
 """
 
-from typing import Optional, Iterator, TYPE_CHECKING, List, Dict, Any, AsyncGenerator
+from typing import Optional, Iterator, TYPE_CHECKING, List, Dict, Any
 import json
 
 from core.agent import Agent
 from core.llm import PentestAgentLLM
 from core.config import Config
 from core.message import Message
-from core.streaming import StreamEvent, StreamEventType
-from core.lifecycle import LifecycleHook
 
 if TYPE_CHECKING:
     from tools.registry import ToolRegistry
@@ -363,78 +361,3 @@ class SimpleAgent(Agent):
         # 保存完整对话到历史记录
         self.add_message(Message(input_text, "user"))
         self.add_message(Message(full_response, "assistant"))
-
-    async def arun_stream(
-        self,
-        input_text: str,
-        on_start: LifecycleHook = None,
-        on_finish: LifecycleHook = None,
-        on_error: LifecycleHook = None,
-        **kwargs
-    ) -> AsyncGenerator[StreamEvent, None]:
-        """
-        SimpleAgent 真正的流式执行
-
-        实时返回 LLM 输出的每个文本块
-
-        Args:
-            input_text: 用户输入
-            on_start: 开始钩子
-            on_finish: 完成钩子
-            on_error: 错误钩子
-            **kwargs: 其他参数
-
-        Yields:
-            StreamEvent: 流式事件
-        """
-        # 发送开始事件
-        yield StreamEvent.create(
-            StreamEventType.AGENT_START,
-            self.name,
-            input_text=input_text
-        )
-
-        try:
-            # 构建消息列表
-            messages = []
-
-            if self.system_prompt:
-                messages.append({"role": "system", "content": self.system_prompt})
-
-            for msg in self._history:
-                messages.append({"role": msg.role, "content": msg.content})
-
-            messages.append({"role": "user", "content": input_text})
-
-            # LLM 流式调用
-            full_response = ""
-            async for chunk in self.llm.astream_invoke(messages, **kwargs):
-                full_response += chunk
-
-                # 发送 LLM 输出块
-                yield StreamEvent.create(
-                    StreamEventType.LLM_CHUNK,
-                    self.name,
-                    chunk=chunk
-                )
-
-            # 发送完成事件
-            yield StreamEvent.create(
-                StreamEventType.AGENT_FINISH,
-                self.name,
-                result=full_response
-            )
-
-            # 保存到历史
-            self.add_message(Message(input_text, "user"))
-            self.add_message(Message(full_response, "assistant"))
-
-        except Exception as e:
-            # 发送错误事件
-            yield StreamEvent.create(
-                StreamEventType.ERROR,
-                self.name,
-                error=str(e),
-                error_type=type(e).__name__
-            )
-            raise
