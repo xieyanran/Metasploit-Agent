@@ -2,37 +2,12 @@
 # 所有组件共享的数据中心
 # circular import issue
 from dataclasses import dataclass, field
-import datetime
-from enum import Enum
-from agent.models import Target, Task, ToolResult, Session
-from typing import Any
-
-# 需要进一步理解dataclass
-class AgentStatus(str, Enum):
-    IDLE = "idle"
-    PLANNING = "planning"
-    OBSERVING = "observing"
-    EXECUTING = "executing"
-    WAITING = "waiting"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-# Goal -> Plan -> Task1 -> Task2 -> Task3
-@dataclass
-class PlanningState:
-    goal: str = ""
-    plan: list[Task] = field(default_factory=list)
-    current_index: int = 0
+from agent.models import Target, Session
 
 # execute task currently
 @dataclass
 class ExecutionState:
-    current_task: Task | None = None
     current_session: Session | None = None
-    running: bool = False
-    step: int = 0
-    last_result: ToolResult | None = None 
-    error: str | None = None
 
 @dataclass
 class ModuleState:
@@ -43,53 +18,9 @@ class ModuleState:
     configured: bool = False
 
 @dataclass
-class HistoryState:
-    calls: list[ToolResult] = field(default_factory=list)
-@dataclass
 class AgentState:
-    status: AgentStatus = AgentStatus.IDLE
     target: Target | None = None
-    planning: PlanningState = field(default_factory=PlanningState)
     execution: ExecutionState = field(default_factory=ExecutionState)
     module: ModuleState = field(default_factory=ModuleState)
-    history: HistoryState = field(default_factory=HistoryState)
     # PTES阶段：recon/vuln_analysis/exploitation/post_exploitation，
     ptes_phase: str = "recon"
-
-@dataclass
-class WorldState:
-    """
-    The agent's current understanding of the target environment.
-    """
-    target: Target
-@dataclass
-class ToolCall:
-    tool: str
-    arguments: dict
-    result: ToolResult
-    timestamp: datetime
-
-"""
-Observation passed to the Reasoner.
-- 为什么不直接传 AgentState？
-"""
-@dataclass
-class Observation:
-    """
-    Snapshot of the current environment.
-    This is the only information the Reasoner needs to make decisions.
-    """
-    target: Target | None = None
-    current_task: Task | None = None
-    # 需要加入一个model class吗
-    current_module: str | None = None
-    current_session: Session | None = None
-    last_result: Any | None = None
-    history: list[Any] = field(default_factory=list)
-
-@dataclass
-class Decision:
-    tool: str
-    parameters: dict
-    finish: bool
-    reasoning: str

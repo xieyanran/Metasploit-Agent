@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from enum import Enum
 
 #  Target
 #    ├── hosts
@@ -14,8 +13,7 @@ from enum import Enum
 #    │
 #    ├── credentials
 #    ├── sessions
-#    ├── loot
-#    └── tasks
+#    └── loot
 
 # ============================================================
 # Target
@@ -35,7 +33,6 @@ class Target:
     credentials: list["Credential"] = field(default_factory=list)
     sessions: list["Session"] = field(default_factory=list)
     loot: list["Loot"] = field(default_factory=list)
-    tasks: list["Task"] = field(default_factory=list)
 
 
 # ============================================================
@@ -122,6 +119,9 @@ class Credential:
     hash: str | None = None
     source: str | None = None
     host: str | None = None
+    # 产生这条凭据的episodic memory id，用于后续复用该凭据时把因果链
+    # （凭据取自主机A，被用于登录主机B）精确写回causal_ref，而不是靠LLM去猜
+    origin_memory_id: str | None = None
 
 
 # ============================================================
@@ -141,6 +141,8 @@ class Session:
     tunnel_peer: str | None = None
     via_exploit: str | None = None
     host: str | None = None
+    # 见 Credential.origin_memory_id 的同一用途：这台session对应的episodic memory id
+    origin_memory_id: str | None = None
 
 
 # ============================================================
@@ -158,47 +160,6 @@ class Loot:
     type: str
     description: str | None = None
     host: str | None = None
-
-
-# ============================================================
-# Task
-# ============================================================
-class TaskStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-@dataclass
-class Task:
-    """
-    Represents one executable task.
-    """
-    id: int
-    goal: str
-    name: str
-    tool: str
-    description: str
-    parameters: dict[str, Any] = field(default_factory=dict)
-    priority: int = 0
-    dependencies: list[int] = field(default_factory=list)
-    status: TaskStatus = TaskStatus.PENDING
-    error: str | None = None
-
-
-# ============================================================
-# Command Result
-# ============================================================
-
-@dataclass
-class CommandResult:
-    """
-    Represents the result of executing a shell command.
-    """
-
-    success: bool
-    stdout: str = ""
-    stderr: str = ""
-    exit_code: int = 0
 
 
 # ============================================================
