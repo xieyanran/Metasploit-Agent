@@ -9,6 +9,7 @@ from typing import List
 
 from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
+from core.scope import EngagementScope
 from agent.state import AgentState
 from agent.models import ToolResult
 
@@ -32,8 +33,9 @@ class NmapScanTool(BaseTool):
     name = "nmap_scan"
     description = "Scan a target with Nmap via Metasploit (db_nmap) to discover open ports and services."
 
-    def __init__(self, client: MetasploitClient, name: str = "nmap_scan", description: str = "Scan a target with Nmap via Metasploit (db_nmap) to discover open ports and services."):
+    def __init__(self, client: MetasploitClient, scope: EngagementScope, name: str = "nmap_scan", description: str = "Scan a target with Nmap via Metasploit (db_nmap) to discover open ports and services."):
         self.client = client
+        self.scope = scope
         self.name = name
         self.description = description
 
@@ -63,6 +65,15 @@ class NmapScanTool(BaseTool):
                 success=False,
                 output=None,
                 message="Invalid options.",
+            )
+
+        violation = self.scope.authorize(target, tool_name=self.name)
+        if violation:
+            return ToolResult(
+                tool="nmap_scan",
+                success=False,
+                output=None,
+                message=f"Blocked by scope guard: {violation}",
             )
 
         console = self.client.console.create()

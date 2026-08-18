@@ -30,6 +30,7 @@ from metasploit.exceptions import MetasploitError
 from tools.registry import ToolRegistry
 from tools.builtin import register_builtin_tools
 from core.llm import PentestAgentLLM
+from core.scope import EngagementScope
 from agent.reconnaissance_planandsolve_agent import PlanSolveAgent
 
 DEFAULT_TARGET = "http://example.com"  # 换成已获得授权的测试目标
@@ -60,10 +61,17 @@ def main() -> None:
               "MSF_RPC_HOST/MSF_RPC_PORT/MSF_RPC_USERNAME/MSF_RPC_PASSWORD 与其一致。")
         return
 
+    # 1.5. 加载 engagement scope（scope.json，见 scope.example.json）。
+    #      文件不存在时 fail closed：任何目标都会被 scope 护栏拒绝，而不是放行。
+    scope = EngagementScope.load()
+    print(f"🔒 已加载 scope：{len(scope.entries)} 条授权记录（来源: {scope.source}）")
+    if not scope.entries:
+        print("   ⚠️ scope 为空，所有目标都会被拒绝。请 cp scope.example.json scope.json 并配置授权目标。")
+
     # 2. 注册侦察阶段能用到的工具（当前只有 nmap_scan 会被 Planner 用到，
     #    其余利用类工具会被 system prompt 明确禁止调用，但仍会一并注册进 registry）
     registry = ToolRegistry()
-    register_builtin_tools(registry, client)
+    register_builtin_tools(registry, client, scope)
 
     # 3. 构造 LLM 客户端（provider/model/key 从 .env 自动解析）
     llm = PentestAgentLLM()

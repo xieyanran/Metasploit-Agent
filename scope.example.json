@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy this file to scope.json (gitignored) and list only targets you have explicit authorization to test. Anything not listed here is rejected by core/scope.py before any tool touches the network.",
+  "targets": [
+    {
+      "target": "192.168.56.101",
+      "allow_exploit": true,
+      "note": "Metasploitable2 lab VM — scan + exploit authorized"
+    },
+    {
+      "target": "192.168.56.0/24",
+      "allow_exploit": false,
+      "note": "lab subnet — recon/scan only, no exploit-class modules"
+    }
+  ]
+}

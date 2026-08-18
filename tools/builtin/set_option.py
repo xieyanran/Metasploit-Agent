@@ -7,6 +7,7 @@ from typing import List
 
 from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
+from core.scope import EngagementScope
 from agent.state import AgentState
 from agent.models import ToolResult
 class SetOptionTool(BaseTool):
@@ -16,8 +17,9 @@ class SetOptionTool(BaseTool):
     name = "set_option"
     description = "Set one option for the current Metasploit module."
 
-    def __init__(self, client: MetasploitClient, name: str = "set_option", description: str = "Set one option for the current Metasploit module."):
+    def __init__(self, client: MetasploitClient, scope: EngagementScope, name: str = "set_option", description: str = "Set one option for the current Metasploit module."):
         self.client = client
+        self.scope = scope
         self.name = name
         self.description = description
 
@@ -63,6 +65,21 @@ class SetOptionTool(BaseTool):
                 message = f"Unknown option(s): {', '.join(invalid)}",
                 output = invalid,
             )
+
+        # Fast-fail here so an out-of-scope target is caught before the agent
+        # spends further planning steps configuring a module it can never run.
+        # This is a nicety, not the security boundary itself — run_module's
+        # own scope check is what actually gates execution.
+        host = options.get("RHOSTS") or options.get("RHOST")
+        if host:
+            violation = self.scope.authorize(host, tool_name=self.name)
+            if violation:
+                return ToolResult(
+                    tool = "set_option",
+                    success = False,
+                    message = f"Blocked by scope guard: {violation}",
+                    output = None,
+                )
 
         if "PAYLOAD" in options:
             state.module.payload = options["PAYLOAD"]

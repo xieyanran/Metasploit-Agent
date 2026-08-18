@@ -5,6 +5,7 @@ from typing import List
 
 from tools.base import BaseTool, ToolParameter
 from metasploit.client import MetasploitClient
+from core.scope import EngagementScope
 from agent.state import AgentState
 from agent.models import ToolResult
 
@@ -15,8 +16,9 @@ class RunModuleTool(BaseTool):
     name = "run_module"
     description = "Run Metasploit module."
 
-    def __init__(self, client: MetasploitClient, name: str = "run_module", description: str = "Run Metasploit module."):
+    def __init__(self, client: MetasploitClient, scope: EngagementScope, name: str = "run_module", description: str = "Run Metasploit module."):
         self.client = client
+        self.scope = scope
         self.name = name
         self.description = description
 
@@ -28,11 +30,27 @@ class RunModuleTool(BaseTool):
         ]
 
     def execute(self,
-                state: AgentState, 
+                state: AgentState,
                 module_type: str,
                 module_name: str,
                 options: dict,
                 ) -> ToolResult:
+        host = options.get("RHOSTS") or options.get("RHOST") or (
+            state.target.address if state.target else None
+        )
+        violation = self.scope.authorize(
+            host or "",
+            tool_name=self.name,
+            require_exploit=(module_type == "exploit"),
+        )
+        if violation:
+            return ToolResult(
+                tool=f"Metaspolit Module '{module_name}'",
+                success=False,
+                output=None,
+                message=f"Blocked by scope guard: {violation}",
+            )
+
         result = self.client.modules.execute (
             module_type = module_type,
             module_name = module_name,

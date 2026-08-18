@@ -2,6 +2,7 @@
 Central registration point for all built-in Metasploit tools.
 """
 from metasploit.client import MetasploitClient
+from core.scope import EngagementScope
 from tools.registry import ToolRegistry
 
 from tools.builtin.nmap_scan import NmapScanTool
@@ -23,19 +24,25 @@ from tools.builtin.stop_session import StopSessionTool
 from tools.builtin.memory_tool import MemoryTool
 
 
-def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient) -> None:
+def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient, scope: EngagementScope) -> None:
     """
     Instantiate and register every built-in tool against the given client.
+
+    `scope` is required (not defaulted) so that wiring a scope guard is never
+    accidentally skipped — see core/scope.py. Only tools that can make the
+    agent act on a raw target (scan or execute a module) are scope-checked;
+    session/job-management tools act on already-established IDs and are out
+    of scope for this check.
     """
-    registry.register_tool(NmapScanTool(client))
+    registry.register_tool(NmapScanTool(client, scope))
     registry.register_tool(ListSessionTool(client))
     registry.register_tool(ExecuteSessionTool(client))
     registry.register_tool(KillMeterpreterSessionTool(client))
     registry.register_tool(SearchModuleTool(client))
     registry.register_tool(InfoModuleTool(client))
     registry.register_tool(ShowOptionTool(client))
-    registry.register_tool(SetOptionTool(client))
-    registry.register_tool(RunModuleTool(client))
+    registry.register_tool(SetOptionTool(client, scope))
+    registry.register_tool(RunModuleTool(client, scope))
     registry.register_tool(CompatiblePayloadsTool(client))
     registry.register_tool(ShellUpgradeTool(client))
     registry.register_tool(SessionCompatibleModulesTool(client))
