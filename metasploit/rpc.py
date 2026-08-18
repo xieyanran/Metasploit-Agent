@@ -53,13 +53,17 @@ class MetasploitRPCClient:
     
     def logout(self):
         """
-        Remove the specified token from the authentication token list. 
+        Remove the specified token from the authentication token list.
         """
         if self.token is None:
             return
-        if self.logouttoken is None:
-            return
-        response = self._call("auth.logout", self.token, self.logouttoken)
+        # self.logouttoken lets a caller invalidate a token other than its
+        # own (msfrpcd's auth.logout takes the acting token plus the token
+        # to revoke as two separate params); nothing in this class ever sets
+        # it, so default to self-logout — otherwise logout() is a permanent
+        # no-op and self.token never gets cleared.
+        logouttoken = self.logouttoken or self.token
+        response = self._call("auth.logout", self.token, logouttoken)
         if response.get("result") == "success":
             self.token = None
         else:

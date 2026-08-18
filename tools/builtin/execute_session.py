@@ -88,6 +88,7 @@ class ExecuteSessionTool(BaseTool):
 
             else:
                 return ToolResult(
+                    tool = f"Session Set and Execute a Command",
                     success = False,
                     output = f"Unsupported session type: {session_type}",
                     message = f"Set session unsuccessfully."
