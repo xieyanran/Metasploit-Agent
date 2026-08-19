@@ -363,9 +363,25 @@ class PostReconReActAgent(Agent):
                 break
 
         if final_answer is None:
-            # 达到最大步数仍未调用 Finish，退回一次不带工具的调用作为兜底答案
-            fallback = self.llm.invoke(messages, **kwargs)
+            # 达到最大步数仍未调用 Finish，退回一次不带工具的调用作为兜底答案。仅把原始对话
+            # 历史原样丢给模型往往收敛不出实质结论（曾实测出现兜底答案为空字符串的情况——模型
+            # 还停留在"继续探索"的思路里，而不是切换到总结模式），所以显式追加一条收敛指令，
+            # 强制模型基于已有信息给出当前能给出的最终结论，而不是自由发挥
+            convergence_prompt = {
+                "role": "user",
+                "content": (
+                    "你已达到本阶段的最大步数限制，无法再调用工具。请基于以上已经获得的全部信息，"
+                    "直接给出你当前能给出的最终结论（不要再尝试新的探索）。如果结论不完整，明确"
+                    "说明已确认的部分和仍缺失的部分；如果存在计划偏差，按约定在开头加上"
+                    "`⚠️ REPLAN_NEEDED: <原因>` 标记。"
+                ),
+            }
+            fallback = self.llm.invoke(messages + [convergence_prompt], **kwargs)
             final_answer = fallback.content if hasattr(fallback, 'content') else str(fallback)
+            if not final_answer or not final_answer.strip():
+                # 收敛指令仍未产出有效结论：不要把空字符串当成"正常结束"静默传下去，
+                # 显式标记为计划偏差，让编排层/下游能感知到"这阶段没有真正给出结论"
+                final_answer = "⚠️ REPLAN_NEEDED: 已达最大步数上限，且兜底总结未能生成有效结论。"
 
         # 计划偏差信号：本身也要落一条episodic记忆，否则"当时为什么改了计划"这条
         # 复盘线索会随会话结束而丢失（见docs/DESIGN.md）
