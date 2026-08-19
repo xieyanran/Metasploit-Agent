@@ -18,5 +18,21 @@
     - Trust Boundary: 
 
 > trust boundaries on a DFD are your initial target list
+
 > **Attack Surface**: The attack surface of a system is the total set of points where an unauthorized user can attempt to enter data, extract data, or interact with the system.Every external entity's connection to an internal process; Every data flow that crosses a trust boundary; Every exposed service or endpoint that accepts input
+
 ## Threat Model framework
+
+### Threat Modeling with ATT&CK: The CTID Methodology
+
+1. Search by Industry
+2. Search by Platform
+3. Compile Navigator Layers
+4. Overlay and Analyze
+5. Map Defenses to Gaps
+
+- ATT&CK Navigator
+
+
+
+
