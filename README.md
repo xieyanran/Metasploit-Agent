@@ -190,3 +190,9 @@ This agent executes real exploit modules against real hosts. The scope guard (`c
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) — runtime state the agent maintains
 - [`docs/TOOL_INTERFACE.md`](docs/TOOL_INTERFACE.md) — tool interface design principles
 - [`docs/pentest_framework.md`](docs/pentest_framework.md) / [`docs/threat_modeling.md`](docs/threat_modeling.md) / [`docs/network_reconnaissance.md`](docs/network_reconnaissance.md) — methodology notes (Cyber Kill Chain, OSSTMM, PTES, MITRE ATT&CK)
+
+## License
+
+Licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) — Attribution, NonCommercial, ShareAlike. See [`LICENSE`](LICENSE) for the full text.
+
+The `memory/`, `context/`, and [`tools/builtin/memory_tool.py`](tools/builtin/memory_tool.py) modules are adapted from [HelloAgents](https://github.com/jjyaoao/HelloAgents), also CC BY-NC-SA 4.0.
