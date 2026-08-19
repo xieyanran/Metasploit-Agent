@@ -153,6 +153,18 @@ tests/tool_tests/test_run_module.py::test_run_module_mock_exploit_blocked_withou
 
 See [`docs/TESTING.md`](docs/TESTING.md) for the full three-layer testing strategy (unit / integration / e2e) and how to reproduce every layer, including the live exploit above, yourself.
 
+## Quantified Benchmark
+
+The demo above is one run against one target. [`benchmarks/exploit_benchmark.py`](benchmarks/exploit_benchmark.py) is a reproducible harness that measures the same "vulnerability analysis → exploitation" capability across **multiple real CVEs**, not a single cherry-picked one: given nothing but a service fingerprint (the kind of thing a completed recon phase hands off), the agent must autonomously search for, verify, configure, and dispatch a matching Metasploit module — with success independently verified from the actual `run_module` tool result (a real `job_id` from `msfrpcd`), never from the agent's own self-report.
+
+| Target | CVE | Success | Time | Tool calls |
+|---|---|---|---|---|
+| s2-045 | CVE-2017-5638 (Struts2 OGNL) | ✅ | 283.0s | 17 |
+| s2-057 | CVE-2018-11776 (Struts2 OGNL) | ❌ | 316.3s | 18 |
+| spring-cve-2022-22963 | CVE-2022-22963 (Spring SpEL) | ❌ | 526.6s | 11 |
+
+**1/3 end-to-end success** under an 8+10 step budget. This is reported as a real baseline, not tuned after the fact — the two failures share a diagnosed, fixable cause (the vulnerability-analysis phase exhausted its step budget while still comparing candidate modules, so it never reached a decisive handoff for the exploitation phase to act on), not a capability gap. See [`benchmarks/README.md`](benchmarks/README.md) for the full methodology, the failure-mode analysis, and how to reproduce or extend it with more targets.
+
 ## Preparations
 
 - Install Metasploit: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html
@@ -174,6 +186,7 @@ This agent executes real exploit modules against real hosts. The scope guard (`c
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full design rationale: agent paradigm choice, PEAS task environment, memory system design, context engineering
 - [`docs/TESTING.md`](docs/TESTING.md) — three-layer testing strategy and how to reproduce it
+- [`benchmarks/README.md`](benchmarks/README.md) — the multi-CVE exploit benchmark: methodology, results, and failure-mode analysis
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) — runtime state the agent maintains
 - [`docs/TOOL_INTERFACE.md`](docs/TOOL_INTERFACE.md) — tool interface design principles
 - [`docs/pentest_framework.md`](docs/pentest_framework.md) / [`docs/threat_modeling.md`](docs/threat_modeling.md) / [`docs/network_reconnaissance.md`](docs/network_reconnaissance.md) — methodology notes (Cyber Kill Chain, OSSTMM, PTES, MITRE ATT&CK)
