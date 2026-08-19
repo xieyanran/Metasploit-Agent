@@ -1,5 +1,7 @@
 # Metasploit Pentest Agent
 
+English | [简体中文](README.zh-CN.md)
+
 An LLM agent that drives real penetration tests through the Metasploit Framework — reconnaissance, threat modeling, vulnerability analysis, exploitation, and post-exploitation — instead of a static scan-and-report script.
 
 ## Why an agent, not a script
