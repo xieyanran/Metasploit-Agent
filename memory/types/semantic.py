@@ -166,7 +166,7 @@ class SemanticMemory(BaseMemory):
     def _init_databases(self):
         """初始化专业数据库存储"""
         try:
-            from ...core.database_config import get_database_config
+            from core.database_config import get_database_config
             # 获取数据库配置
             db_config = get_database_config()
             
@@ -1195,6 +1195,10 @@ class SemanticMemory(BaseMemory):
         related_memory_ids: Set[str] = set()
         for entity_id in entity_ids:
             try:
+                # 直接（0跳）信号：还有哪些其他记忆提到了同一个实体——这是"是否在讨论
+                # 同一个实体"最直接的判定依据，不依赖关系遍历
+                related_memory_ids.update(self.graph_store.get_entity_memory_ids(entity_id))
+
                 for rel_entity in self.graph_store.find_related_entities(
                     entity_id=entity_id, max_depth=1, limit=20
                 ):

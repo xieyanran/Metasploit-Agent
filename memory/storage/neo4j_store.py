@@ -134,7 +134,14 @@ class Neo4jGraphStore:
             bool: 是否成功
         """
         try:
-            props = properties or {}
+            props = dict(properties or {})
+            # memory_id 不能进 $properties 被 SET e += 直接覆盖：同一个实体（如同一个CVE）
+            # 被多条记忆先后提及时，MERGE会命中同一节点，SET e += 会把上一条记忆的
+            # memory_id覆盖掉，只留最后一次写入者——find_related_by_entities依赖的
+            # "这个实体还被哪些其他记忆提到过"信息因此永久丢失，矛盾检测的实体候选路径
+            # 形同虚设（尤其是措辞高度相似只在结论上矛盾的场景，见该方法的docstring）。
+            # 这里改成单独用memory_ids累加列表记录，不受其余属性覆盖影响。
+            memory_id = props.pop("memory_id", None)
             props.update({
                 "id": entity_id,
                 "name": name,
@@ -142,25 +149,47 @@ class Neo4jGraphStore:
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat()
             })
-            
+
             query = """
             MERGE (e:Entity {id: $entity_id})
             SET e += $properties
+            SET e.memory_ids = CASE
+                WHEN $memory_id IS NULL THEN coalesce(e.memory_ids, [])
+                WHEN e.memory_ids IS NULL THEN [$memory_id]
+                WHEN NOT $memory_id IN e.memory_ids THEN e.memory_ids + $memory_id
+                ELSE e.memory_ids
+            END
             RETURN e
             """
-            
+
             with self.driver.session(database=self.database) as session:
-                result = session.run(query, entity_id=entity_id, properties=props)
+                result = session.run(query, entity_id=entity_id, properties=props, memory_id=memory_id)
                 record = result.single()
-                
+
                 if record:
                     logger.debug(f"✅ 添加实体: {name} ({entity_type})")
                     return True
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ 添加实体失败: {e}")
             return False
+
+    def get_entity_memory_ids(self, entity_id: str) -> List[str]:
+        """获取提及过该实体的全部记忆ID（累加列表，见add_entity）
+
+        用于find_related_by_entities的直接（0跳）候选来源：判断"还有哪些其他记忆
+        提到了同一个实体"，不依赖1跳关系遍历——1跳遍历依赖的CO_OCCURS关系同样存在
+        同名的属性覆盖问题，直接读实体自身的memory_ids列表更可靠。
+        """
+        try:
+            query = "MATCH (e:Entity {id: $entity_id}) RETURN e.memory_ids AS memory_ids"
+            with self.driver.session(database=self.database) as session:
+                record = session.run(query, entity_id=entity_id).single()
+                return list(record["memory_ids"]) if record and record["memory_ids"] else []
+        except Exception as e:
+            logger.error(f"❌ 获取实体memory_ids失败: {e}")
+            return []
     
     def add_relationship(
         self, 

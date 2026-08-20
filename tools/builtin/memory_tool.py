@@ -5,13 +5,18 @@
 专注于用户接口和参数处理
 Reference: https://github.com/jjyaoao/HelloAgents/blob/learn_version/hello_agents/tools/builtin/memory_tool.py
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from datetime import datetime
 
 from ..base import BaseTool, ToolParameter, tool_action
 from memory import MemoryManager, MemoryConfig
 from agent.models import ToolResult
 from agent.state import AgentState
+
+if TYPE_CHECKING:
+    from core.llm import PentestAgentLLM
+
+
 class MemoryTool(BaseTool):
     """
     记忆工具 - 为Agent提供记忆功能
@@ -21,7 +26,8 @@ class MemoryTool(BaseTool):
         self,
         user_id: str = "default_user",
         memory_config: MemoryConfig = None,
-        memory_types: List[str] = None
+        memory_types: List[str] = None,
+        llm: Optional["PentestAgentLLM"] = None
     ):
         super().__init__(
             name="memory",
@@ -40,6 +46,15 @@ class MemoryTool(BaseTool):
             enable_semantic="semantic" in self.memory_types,
             enable_perceptual="perceptual" in self.memory_types
         )
+
+        # llm 是可选依赖：仅用于给手动 add(is_target_bound=False) 写入的 semantic 记忆
+        # 过一遍 SemanticMemoryMaintainer 的去重/矛盾检测（见 _add_memory）。不传时
+        # 优雅跳过，行为与之前完全一致——不为这个次要能力强制引入 LLM 硬依赖。
+        self.llm = llm
+        self._semantic_maintainer = None
+        if llm is not None and "semantic" in self.memory_types:
+            from memory.maintenance import SemanticMemoryMaintainer
+            self._semantic_maintainer = SemanticMemoryMaintainer(self.memory_manager, llm)
 
         # 会话状态
         self.current_session_id = None
@@ -247,6 +262,17 @@ class MemoryTool(BaseTool):
                 auto_classify=True
             )
 
+            # 阶段边界触发的自动归纳会自己批量调用 maintain()（见 MemoryExtractor.
+            # _consolidate_phase_job），但 Agent 通过这个工具手动写入的 semantic 记忆
+            # 此前完全绕开了去重/矛盾检测——手动写入且自报高置信度的结论会原样可检索，
+            # 不经过任何审查。这里用 has_memory 判断实际落库类型（而不是重新走一遍
+            # 分类逻辑），确认真的写入了 semantic 才补一次 maintain()；没有配置 llm
+            # 时 self._semantic_maintainer 为 None，优雅跳过，行为不变。
+            if self._semantic_maintainer is not None:
+                semantic = self.memory_manager.memory_types.get("semantic")
+                if semantic is not None and semantic.has_memory(memory_id):
+                    self._semantic_maintainer.maintain([memory_id])
+
             # 返回完整memory_id（不截断）：exploitation阶段需要把这个id原样记下来，
             # 作为causal_ref传给后续相关联的episodic写入（例如"凭据X取自主机A"记录的
             # memory_id，后续在"用该凭据登录主机B"的记录里作为causal_ref引用），
@@ -334,7 +360,15 @@ class MemoryTool(BaseTool):
                 content_preview = memory.content[:80] + "..." if len(memory.content) > 80 else memory.content
                 # id必须完整暴露（不截断）：episodic/semantic检索结果常常是后续写入新记忆时
                 # causal_ref/derived_from的来源，截断的id无法被精确引用
-                line = f"{i}. [id: {memory.id}] [{memory_type_label}] {content_preview} (重要性: {memory.importance:.2f}"
+                line = f"{i}. [id: {memory.id}] [{memory_type_label}]"
+                # target_ref 必须显式打印：engagement_id 是 episodic 的唯一检索边界，同一
+                # engagement 下可能横跨多个 target，不带 target_ref 时下游（LLM/调用方）
+                # 完全无法分辨这条结果是不是当前正在打的这台目标——Target A 上有效的凭据
+                # 很容易被误当成 Target B 的参考（记忆污染场景之一，见 DESIGN.md）
+                target_ref = memory.metadata.get("target_ref")
+                if target_ref:
+                    line += f" [target: {target_ref}]"
+                line += f" {content_preview} (重要性: {memory.importance:.2f}"
                 # confidence/disputed 由 semantic 检索的融合排序+过滤逻辑算出，
                 # 但只落在 MemoryItem.metadata 里；context/builder.py 最终只把
                 # 这段格式化文本（content）交给LLM，metadata不会被读取，因此这两个

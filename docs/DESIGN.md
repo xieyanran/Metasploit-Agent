@@ -55,53 +55,53 @@ This agent will rely on its own custom-built framework for the time being, rathe
 - Target environments also vary widely (defense posture, compliance boundaries, past successful exploit chains). Episodic/semantic memory is needed to accumulate **experience** — which techniques work in which environments — so the agent can make decisions tailored to a specific target in future engagements instead of reasoning from scratch every time.
 
 ### Retrieval-Augmented Generation Design
-还在未来的拓展开发中
+Still on the roadmap for future development.
 
 ### Context Engineering
-什么样的上下文配置，最有可能让模型产出我们期望的行为？
-在推理阶段，如何策划与维护“最优的信息集合(tokens)”, 不仅仅包括提示本身，还包括其他会进入上下文窗口的一切信息。
+What context configuration is most likely to make the model produce the behavior we want?
+During inference, how do we curate and maintain the "optimal set of information (tokens)" — not just the prompt itself, but everything else that enters the context window.
 
-- 为什么context Engineering 很重要
-    - 上下文腐蚀(context rot): 随着上下文窗口中的tockens增加，模型从上下文中准确回忆信息的能力反而下降。因此，上下文被视作一种资源，并且具有边际收益递减。
+- Why Context Engineering matters
+    - Context rot: as the number of tokens in the context window grows, the model's ability to accurately recall information from that context actually declines. Context should therefore be treated as a resource subject to diminishing marginal returns.
 
-- 目标：用尽可能少，但高信号密度的tockens,最大化获得期望结果的概率。
+- Goal: use as few tokens as possible, but with the highest possible signal density, to maximize the probability of getting the desired outcome.
 
-- Context Engineering组件
-    - System Prompt 语言清晰、直白，信息层级把握在“刚刚好”的高度。常见两极误区：
-        - 过度硬编码：在提示中写入复杂、脆弱的 if-else 逻辑，长期维护成本高、易碎。
-        - 过于空泛：只给出宏观目标与泛化指引
-        - 建议将提示分区组织（如 <background_information>、、工具指引、输出描述等），用 XML/Markdown 分隔。
+- Context Engineering components
+    - System Prompt: the language should be clear and direct, with the level of detail pitched "just right." Two common failure modes sit at opposite extremes:
+        - Over-hardcoding: encoding complex, brittle if-else logic directly into the prompt, which is costly to maintain and easily breaks.
+        - Over-vague: giving only high-level goals and generic guidance.
+        - Recommendation: organize the prompt into sections (e.g., `<background_information>`, tool guidance, output description, etc.), delimited with XML/Markdown.
     - Tools:
-        - 工具定义了智能体与信息/行动空间的契约，必须促进效率：既要返回token 友好的信息，又要鼓励高效的智能体行为。
-            - 职责单一、相互低重叠，接口语义清晰；
-            - 对错误鲁棒
-            - 入参描述明确、无歧义，充分发挥模型擅长的表达与推理能力
-    - 示例（Few-shot）：始终推荐提供示例, 对 LLM 而言，好的示例胜过千言万语
+        - Tools define the contract between the agent and its information/action space, and must promote efficiency: they should return token-efficient information while also encouraging effective agent behavior.
+            - Single responsibility, minimal overlap between tools, and clear interface semantics;
+            - Robust to errors;
+            - Parameter descriptions that are precise and unambiguous, making full use of the model's strengths in expression and reasoning.
+    - Examples (Few-shot): providing examples is always recommended — for an LLM, a good example is worth a thousand words.
 
-- 面向长时程任务的上下文工程：
-    - Compaction: 
-        - 定义：当对话接近上下文上限时，对其进行高保真总结，并用该摘要重启一个新的上下文窗口，以维持长程连贯性。
-        - 实践：让模型压缩并保留架构性决策、未解决缺陷、实现细节，丢弃重复的工具输出与噪声；新窗口携带压缩摘要 + 最近少量高相关工件（如“最近访问的若干文件”）。
-        - 调参建议：先优化召回（确保不遗漏关键信息），再优化精确度（剔除冗余内容）；一种安全的“轻触式”压缩是对“深历史中的工具调用与结果”进行清理。
-    - Structed note-taking:
-        - 定义：也称“智能体记忆”。智能体以固定频率将关键信息写入上下文外的持久化存储，在后续阶段按需拉回。
-        - 价值：以极低的上下文开销维持持久状态与依赖关系。例如维护 TODO 列表、项目 NOTES.md、关键结论/依赖/阻塞项的索引，跨数十次工具调用与多轮上下文重置仍能保持进度与一致性。
-        - 说明：在非编码场景中同样有效（如长期策略性任务、游戏/仿真中的目标管理与统计计数）。结合第八章的 MemoryTool，可轻松实现文件式/向量式的外部记忆并在运行时检索。
+- Context engineering for long-horizon tasks:
+    - Compaction:
+        - Definition: as a conversation approaches the context limit, produce a high-fidelity summary of it and restart a new context window with that summary, preserving long-range coherence.
+        - Practice: have the model compress the conversation while preserving architectural decisions, unresolved issues, and implementation details, discarding repetitive tool output and noise; the new window carries the compressed summary plus a small set of recent, highly relevant artifacts (e.g., "the handful of files accessed most recently").
+        - Tuning advice: optimize for recall first (make sure nothing critical is lost), then for precision (trim redundant content); one safe, "light-touch" form of compaction is cleaning up tool calls and results from deep history.
+    - Structured note-taking:
+        - Definition: also called "agentic memory." The agent writes key information to persistent storage outside the context window at a fixed cadence, and pulls it back in as needed in later stages.
+        - Value: maintains persistent state and dependency relationships at very low context cost. For example, maintaining a TODO list, a project NOTES.md file, or an index of key conclusions/dependencies/blockers lets the agent preserve progress and consistency across dozens of tool calls and multiple context resets.
+        - Note: this is equally effective outside coding scenarios (e.g., long-horizon strategic tasks, or goal tracking and stat-keeping in games/simulations). Combined with the MemoryTool from Chapter 8, this can easily be implemented as file-based or vector-based external memory, retrieved at runtime.
     - Sub-agent architectures:
-        - 
+        -
 
 ### Context Engineering && Memory System 
 
-| 维度 | Context Engineering | Memory System |
+| Dimension | Context Engineering | Memory System |
 |---|---|---|
-| 关注层面 | 单次推理时，喂给模型的 token 集合该如何组织 | 信息在时间维度上该如何提取、分类、存储、检索、维护 |
-| 核心问题 | "这一刻上下文窗口里该放什么" | "这些信息从哪来、该不该留、留多久、怎么被找回来" |
-| 作用范围 | 运行时/单次 LLM 调用层面的策略 | 跨会话/跨 engagement 的系统架构层面设计 |
-| 目标 | 用尽可能少、信号密度尽可能高的 token，最大化拿到期望输出的概率 | 让 agent 能持久保留资产/凭据/经验，避免长任务中重复扫描、重复试错 |
-| 典型组件/技术 | System Prompt、Tools、Few-shot、Compaction、Structured note-taking | Working/Episodic/Semantic/Perceptual 四层记忆的提取时机、组织粒度、检索策略、遗忘与巩固机制 |
-| 二者关系 | 约束 Memory 检索结果必须以什么形态、什么密度进入 context window（结论摘要+结构化标签，而非原始记录），否则会造成 context rot | 为 Context Engineering 提供可复用的长程知识供给层；Structured note-taking 本质就是"以固定频率写入外部持久化存储、按需拉回"的 memory 机制 |
+| Focus | How to organize the set of tokens fed to the model for a single inference call | How information is extracted, classified, stored, retrieved, and maintained over time |
+| Core question | "What should go in the context window right now?" | "Where does this information come from, should it be kept, for how long, and how is it retrieved later?" |
+| Scope | Runtime strategy at the level of a single LLM call | System-architecture design spanning sessions and engagements |
+| Goal | Maximize the probability of getting the desired output using as few tokens as possible with the highest signal density | Let the agent persistently retain assets/credentials/experience, avoiding redundant scans and repeated trial-and-error over long-running tasks |
+| Typical components/techniques | System Prompt, Tools, Few-shot, Compaction, Structured note-taking | Extraction timing, organizational granularity, retrieval strategy, and forgetting/consolidation mechanisms across the four memory layers — Working/Episodic/Semantic/Perceptual |
+| Relationship | Constrains what form and density Memory's retrieval results must take before entering the context window (conclusion summaries plus structured tags, rather than raw records) — otherwise causing context rot | Supplies Context Engineering with a reusable long-horizon knowledge layer; Structured note-taking is, in essence, a memory mechanism that "writes to persistent external storage at a fixed cadence and pulls it back in as needed" |
 
-一句话概括：Context Engineering 是通用的、面向单次推理的信息治理原则；Memory System 是在这个渗透测试场景下，把"哪些信息要跨会话留存"单独抽出来做的存储/检索/维护子系统——Memory 为 Context 提供长程知识，Context Engineering 反过来约束 Memory 输出的内容该以什么样子进入模型的推理窗口。
+In one sentence: Context Engineering is a general-purpose information-governance discipline for a single inference call; Memory System is the storage/retrieval/maintenance subsystem that, in this penetration-testing context, is factored out specifically to handle "which information needs to persist across sessions." Memory supplies Context with long-horizon knowledge, while Context Engineering, in turn, constrains the form in which Memory's output enters the model's inference window.
 
 ## MetaspolitAgent Architecture(version 1.0.0)
 ```
@@ -280,8 +280,7 @@ firstpentestAgent/
         - `derived_from` (list[str], pointing to the episodic memory_ids it was generalized from): traces which episodic records this semantic knowledge was consolidated from
 
     - **Perceptual-specific**:
-        - `modality`
-        - `raw_data`
+        - 正在开发中
 
 - Update semantics: different memory types follow different update strategies, detailed under Memory Maintenance design.
     - Working Memory uses overwrite-style update semantics.
@@ -303,41 +302,33 @@ firstpentestAgent/
     - **Retrieval boundary**: `engagement_id` is the sole boundary. Fuzzy, cross-engagement queries like "have we seen something similar before" are handled entirely by Semantic Memory retrieval — a natural extension of the classification criterion already established ("would this still be useful against a different target?"): episodic memory only answers "what happened within this engagement."
     - Retrieval flow: the LLM first queries Semantic Memory (recalling similar situations/experience and reasoning about possible attack chains — once a RAG system is introduced, this can also serve as a reference), and then, based on that, the LLM determines the specific metadata parameters to run as a SQL query.
     
-- **Semantic Memory 检索策略的thinking && design**
-    - **检索边界**：没有任何硬性的过滤边界，这是已有分类标准（"换个目标还有用吗"）的自然延伸
-    
-    - **实体抽取**：正则 + 词典为主，不依赖通用 NER 作为主匹配信号。
-        - 正则抓格式规整的结构化标识符：CVE 编号（`CVE-\d{4}-\d{4,7}`）、MS 漏洞编号（`MS\d{2}-\d{3}`）、msf 模块路径、端口号等。
-        - 词典抓常见服务/组件/协议/防御产品名（SMB、Redis、Struts2、WAF 厂商名等），这份词典随经验积累持续增长——在 episodic→semantic 归纳环节顺手把新出现的服务/组件名补充进去，不需要重新训练模型。
-        - 通用 NER（spaCy）继续并行跑，补充人名/组织/地域类辅助实体、写入图谱做辅助节点，但不作为图检索的主匹配信号——它对 CVE 编号、msf 模块路径这类领域技术词基本不会识别为实体，靠它做主信号图检索这条腿等于半失效。
-        - Query 和 memory content 用同一套抽取逻辑，保证两边的实体 id 能对上。
+- **Semantic Memory retrieval strategy: thinking && design**
 
-    - **双路召回**：向量检索（Qdrant 相似度）+ 图检索（Neo4j，用抽出的实体找 2 跳内相关记忆），两路各自独立召回后再融合，不互相替代。
+    - **Retrieval boundary**: there is no hard filtering boundary at all — a natural extension of the classification criterion already established ("would this still be useful against a different target?").
 
-    - **融合排序公式**：
-        ```
-        base_relevance    = vector_score * 0.7 + graph_score * 0.3
-        importance_weight  = 0.8 + importance * 0.4         区间 [0.8, 1.2]
-        confidence_weight  = 0.7 + confidence * 0.6          区间 [0.7, 1.3]
-        combined_score     = base_relevance * importance_weight * confidence_weight
-        ```
-        - `confidence_weight` 新增，且区间比 `importance_weight` 更宽——可信度应该比重要性更能决定排序优先级：一条不可信的经验即使重要性判断很高也不该排到前面，这是把 `confidence`/`disputed` 这两个已经设计在 metadata schema 里、但之前没有真正参与排序的字段接回检索链路。
-        - 0.7/0.3 的向量/图权重先沿用已有比例，后续如果有真实检索日志支持再调整。
+    - **Dual-path recall + fused ranking**: two independent relevance signals are recalled separately, then merged into a single ranking.
+        - Semantic relevance: this kind of fuzzy matching is handled by vector similarity.
+        - Same technical object: the same CVE, the same service, the same exploit module.
+        - In this case, vector-based retrieval and entity-relationship-based graph retrieval each independently recall a batch of candidates, which are then merged.
+        - Fused ranking: relevance itself, combined with importance and confidence.
 
-    - **Disputed 过滤规则**：候选集合里若某条 disputed 记忆存在未被标记的替代项（`disputed_with` 指向的记忆也在候选集中），直接剔除该 disputed 记忆，不进入返回结果；若 disputed 记忆是唯一候选（没有替代项一起出现），保留但在返回的 `MemoryItem.metadata` 里显式标注 `disputed=True`，把风险信号交给上层 LLM 自行判断是否采信，而不是静默隐藏——错误的经验比没有经验更危险，这一步直接对应"记忆污染"那一节提到的风险。
+    - **Handling contradictions**: Semantic Memory consists of experiential rules generalized from multiple Episodic records, and conclusions generalized in different batches can end up contradicting each other. Rather than simply deleting or overwriting the older conclusion, the design flags both sides of the conflict: if a more reliable alternative conclusion exists in the candidate set, the flagged, conflicting one is filtered out; if it is the only candidate (no alternative available), it is kept, but the "this is disputed" signal is passed to the LLM to decide for itself whether to trust it.
 
     - **失败兜底**：图检索异常/超时不能阻塞向量检索的返回，两路独立 fail-open，保证最差情况下退化为"纯向量检索"，而不是整个 retrieve() 抛异常返回空。
 
     - 检索前的 query 联想扩展（让 LLM 先把 query 联想成候选关键词再检索）评估过但暂不引入，复杂度和当前阶段的收益不匹配，先把上面几项落地、有实际检索数据后再重新评估。
 
 - **Perceptual Memory 检索策略的思路**
-    - 原始内容（截图、流量包、音频）本身没有可供关键词或结构化字段直接匹配的文本语义，检索天然只能走相似度这一条路——这是数据形态决定的，不是设计取舍的结果。
-    - 理想情况下应支持跨模态检索（用文字描述找截图），但这依赖专门的跨模态编码器（如 CLIP/CLAP）；在没有引入这类模型之前，检索范围只能收窄到同模态内比较，这是当前能力边界带来的临时取舍，不是长期设计目标——一旦跨模态编码可用，检索思路应自然扩展到跨模态查询，不需要重新设计这一层。
-    - 这类记忆是"证据"而非"结论"，排序上除了语义相似度，还要看召回的证据是否仍然新鲜、和当前排查的 target/session 是否对应——时间和归属关系是重要的辅助过滤维度，不能只靠相似度分数。
+    - 正在开发中
 
 - 量化指标:
     - Precision@k / Recall@k：在返回的前 k 条里算准确率和召回率，最基础。
-    - 
+    - 记忆污染抵抗力（见下方「How to deal with the problem?」+ [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：
+        - IAR (Injection Acceptance Rate)：对抗性 tool_output（伪造凭据/伪造 scope_directive/劝退式虚假结论等）里，攻击者注入的虚假事实被 episodic judge 采信并计划落库的比例。越低越好。
+        - BRR (Benign Recall Rate)：对照的真实合法事件仍被正确捕获的比例，和 IAR 一起看——防止"修复"变成"把什么都拦掉"式的假胜利。
+        - CTAR (Cross-Target Attribution Rate)：只按 engagement_id 检索时，返回文本能否机械地区分每条结果属于哪个 target_ref。
+        - CCG (Confidence Calibration Gap)：语义归纳时，"多个不同 target 独立印证"相对"单一 target 灌水"，置信度是否有正向差距。
+        - UCSR (Unreviewed Contradiction Slip-through Rate)：手动写入的矛盾 semantic 记忆，有多大比例绕过矛盾检测、原样以自报高置信度可检索。越低越好。
 
 
 ### Memory Maintence
@@ -361,7 +352,18 @@ firstpentestAgent/
 ## How to deal with the problem?
 记忆污染的风险可能比笔记里写的更值得重视。即使在同一个 engagement_id 边界内，也仍然可能出现跨目标串扰（cross-target bleed）——比如 Target A 上有效的凭据或成功的攻击手法，仅仅因为共享同一个 engagement scope，就被检索出来并错误地套用到 Target B 上；也可能出现信息过期（staleness）的情况——某个漏洞在 engagement 早期被记录为"可利用"，但期间目标可能已打补丁，或 IDS 规则被收紧，而这条过时记录却仍会被当作有效信息反复检索出来。
 
-还有一个更贴合渗透测试场景、值得明确指出的污染途径：由于 episodic memory 是从工具/目标的返回数据中写入的，而目标环境本身是对抗性的，防御方或蜜罐完全可能故意提供误导性的服务 banner、伪造的凭据，或精心构造的响应，这些内容一旦被当作"事实"存下来，就会污染后续的推理——这更接近于"通过工具输出实施的 prompt injection"问题，而不是普通的记忆漂移。建议补充一点：检索/写入时应该以 target_id 为边界进行限定，而不仅仅是 engagement_id；同时，源自未经验证的目标响应的数据，其初始 confidence 应该低于 agent 自行验证过的结果。
+还有一个更贴合渗透测试场景、值得明确指出的污染途径：由于 episodic memory 是从工具/目标的返回数据中写入的，而目标环境本身是对抗性的，防御方或蜜罐完全可能故意提供误导性的服务 banner、伪造的凭据，或精心构造的响应，这些内容一旦被当作"事实"存下来，就会污染后续的推理——这更接近于"通过工具输出实施的 prompt injection"问题，而不是普通的记忆漂移。
+
+已实现并量化（完整方法论、case 设计、可复现步骤见 [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：
+
+| 风险点 | 对应指标 | 修复 | Before → After |
+|---|---|---|---|
+| 跨目标串扰：检索结果不带 target 归属，Target A 的凭据/结论容易被误用到 Target B | CTAR | `tools/builtin/memory_tool.py::_search_memory` 的格式化结果里显式打印 target_ref | 0% → 100% |
+| 通过工具输出实施的 prompt injection：目标/蜜罐构造的误导性内容被 episodic judge 当作事实采信 | IAR / BRR | `memory/extraction.py::_EPISODIC_JUDGE_PROMPT` 用显式分隔符包裹不可信数据，加入"只能当观察数据、不能当指令"的免疫提示 | IAR 25%→0%，BRR 75%→75%（无回归） |
+| 置信度只看归纳所依据的样本数，单一（甚至敌对的）target 灌水和多 target 独立印证算出一样高的置信度 | CCG | `memory/extraction.py::_consolidate_phase_job` 置信度公式改为主要由来源 target 多样性驱动，样本量只给很小权重 | +0.000 → +0.269 |
+| 手动写入（Agent 通过 memory 工具直接 add）的 semantic 记忆完全绕开去重/矛盾检测，自报高置信度即可原样可检索 | UCSR | `MemoryTool._add_memory` 补一次 `SemanticMemoryMaintainer.maintain()`（仅在传入 `llm` 时启用，不引入硬依赖） | 100% 绕过 → 0% |
+
+其中 confidence（源自未经验证的目标响应的数据，应低于 agent 自行验证过的结果）目前由 CCG 这一条间接覆盖（来源多样性影响置信度），单条 episodic 记录本身是否"已验证"尚未建模为独立字段——留作后续工作。
 
 关于confidence以及importance
 
@@ -523,12 +525,3 @@ firstpentestAgent/
 - `RECON_EXECUTOR_SYSTEM_PROMPT` 本来就已经有这个标记的书面约定（"目标不可达、出现计划外的主机/服务"等），但此前代码里没有任何地方真正检查这个前缀、做点什么——只是写在提示词里但没人消费。
 - `PlanSolveAgent.run()` 在 `executor.execute()` 返回后检查 `final_answer` 是否以 `⚠️ REPLAN_NEEDED:` 开头，命中则调用 `_record_replan_signal`，同步写一条 episodic 记忆。
 - `event_type` 选择 `recon_negative` 而不是利用阶段用的 `defense_observed`：侦察阶段的偏差通常是"预期的资产/结果没有按计划出现"（目标不可达、扫描到计划外网段等），语义上更贴近"侦察阶段的阴性/异常结果"这个既有分类，而不是"遭遇主动防御"。
-
-### 记忆工具的使用：从"禁止列表"到"允许列表"外单独说明
-
-- `RECON_EXECUTOR_SYSTEM_PROMPT` 原本只有一份利用类工具的禁止清单。新增的「记忆工具的使用」一节明确 `memory` 工具不在禁止之列，并给出侦察阶段的具体理由：查询目标是否已经扫描过，避免对同一目标重复执行有真实网络开销的扫描——这是侦察阶段区别于利用阶段的记忆使用场景（利用阶段更强调 `causal_ref` 因果链，侦察阶段更强调"别重复扫"）。
-
-### 已删除：`arun_stream`
-
-- `PlanSolveAgent.arun_stream`（及 `SimpleAgent.arun_stream`）曾是一条独立于 `Planner`/`Executor` 的流式实现，直接调用 `self.llm.astream_invoke` 手写 prompt。但 `PentestAgentLLM`（`core/llm.py`）从未实现过 `astream_invoke` 这个方法，且全仓库没有任何调用方使用这两个 `arun_stream`——它们属于未完成、也从未被使用过的死代码，一调用就会因为方法不存在而 `AttributeError`。已连同相关的未使用 import（`StreamEvent`/`StreamEventType`/`AsyncGenerator`/`LifecycleHook`）一起删除；如果之后要做流式输出，建议基于已有的同步 `run()`/`invoke_with_tools()` 路径重新设计，而不是恢复这条半成品实现。
-

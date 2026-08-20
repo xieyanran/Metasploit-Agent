@@ -180,6 +180,7 @@ The first run (1/3) surfaced a real, traceable bug, not model flakiness: under t
 - Copy `scope.example.json` → `scope.json` and list only targets you have explicit authorization to test. Anything not listed is rejected before any tool touches the network — this file is gitignored on purpose.
 - Configure `.env`: `LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL` and `MSF_RPC_HOST` / `MSF_RPC_PORT` / `MSF_RPC_USERNAME` / `MSF_RPC_PASSWORD`.
 - Run the recon example: `python examples/run_plan_solve_agent.py <authorized target>`
+- Optional, only needed for semantic memory (and `benchmarks/memory_poisoning_benchmark.py`'s calibration/contradiction metrics): `docker compose -f docker-compose.memory.yml up -d` starts a local Qdrant + Neo4j pair with defaults matching `core/database_config.py` out of the box.
 
 ## Safety
 
@@ -190,6 +191,7 @@ This agent executes real exploit modules against real hosts. The scope guard (`c
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full design rationale: agent paradigm choice, PEAS task environment, memory system design, context engineering
 - [`docs/TESTING.md`](docs/TESTING.md) — three-layer testing strategy and how to reproduce it
 - [`benchmarks/README.md`](benchmarks/README.md) — the multi-CVE exploit benchmark: methodology, results, and failure-mode analysis
+- [`benchmarks/MEMORY_POISONING.md`](benchmarks/MEMORY_POISONING.md) — quantified memory-poisoning resistance benchmark: 5 metrics, before/after fix results
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) — runtime state the agent maintains
 - [`docs/TOOL_INTERFACE.md`](docs/TOOL_INTERFACE.md) — tool interface design principles
 - [`docs/pentest_framework.md`](docs/pentest_framework.md) / [`docs/threat_modeling.md`](docs/threat_modeling.md) / [`docs/network_reconnaissance.md`](docs/network_reconnaissance.md) — methodology notes (Cyber Kill Chain, OSSTMM, PTES, MITRE ATT&CK)

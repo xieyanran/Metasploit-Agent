@@ -107,40 +107,45 @@ class LocalTransformerEmbedding(EmbeddingModel):
 
 
 class TFIDFEmbedding(EmbeddingModel):
-    """TF-IDF 简易兜底（在无深度模型时保证可用）"""
+    """词袋哈希简易兜底（在无深度模型时保证可用）
+
+    调用方（各 MemoryType）只会直接调用 encode()，不会显式管理语料库/fit()生命周期。
+    这里原先用 sklearn TfidfVectorizer，要求先手动 fit() 才能 encode()，导致
+    encode() 100% 抛异常、语义记忆彻底不可用；改成"遇到新文本就并入语料库重新fit"
+    同样有问题——每次 refit 都会重新分配词表到向量列的映射，导致同一个词在 refit
+    前后落在不同的维度上，refit 之前已经写入向量库的旧向量和之后新算的向量因此
+    不再可比，向量相似度检索会静默失真（不报错，但结果不可靠）。
+
+    改用 HashingVectorizer：把词直接哈希到固定的 max_features 维输出空间，不需要
+    预先fit、不随语料库增长改变维度含义，任意时刻算出的向量都可以互相比较。代价是
+    牺牲真正的 IDF 加权（退化为词频而非"稀有词更重要"），但作为深度模型不可用时的
+    最后一道兜底，"可比性优先于加权精细度"更重要。
+    """
 
     def __init__(self, max_features: int = 1000):
         self.max_features = max_features
         self._vectorizer = None
-        self._is_fitted = False
         self._dimension = max_features
         self._init_vectorizer()
 
     def _init_vectorizer(self):
         try:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            self._vectorizer = TfidfVectorizer(max_features=self.max_features, stop_words='english')
+            from sklearn.feature_extraction.text import HashingVectorizer
+            self._vectorizer = HashingVectorizer(
+                n_features=self.max_features, alternate_sign=False, norm="l2",
+            )
         except ImportError:
             raise ImportError("请安装 scikit-learn: pip install scikit-learn")
 
     def fit(self, texts: List[str]):
-        self._vectorizer.fit(texts)
-        self._is_fitted = True
-        self._dimension = len(self._vectorizer.get_feature_names_out())
+        """HashingVectorizer 无状态、不需要拟合；保留此方法仅为兼容显式调用 fit() 的调用方"""
+        return None
 
     def encode(self, texts: Union[str, List[str]]):
-        if not self._is_fitted:
-            raise ValueError("TF-IDF模型未训练，请先调用fit()方法")
-        if isinstance(texts, str):
-            texts = [texts]
-            single = True
-        else:
-            single = False
-        tfidf_matrix = self._vectorizer.transform(texts)
-        embeddings = tfidf_matrix.toarray()
-        if single:
-            return embeddings[0]
-        return [e for e in embeddings]
+        single = isinstance(texts, str)
+        batch = [texts] if single else list(texts)
+        embeddings = self._vectorizer.transform(batch).toarray()
+        return embeddings[0] if single else [e for e in embeddings]
 
     @property
     def dimension(self) -> int:

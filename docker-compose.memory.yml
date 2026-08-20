@@ -1,0 +1,32 @@
+# Semantic memory 的本地基础设施：Qdrant（向量检索）+ Neo4j（知识图谱）。
+# 与 lab/vulhub/* 下的靶场 compose 文件分开管理——这两个是长期运行的基础设施服务，
+# 不是一次性的攻击目标。默认端口/密码与 core/database_config.py 的默认值一致，
+# 开箱即用，无需额外配置 .env。
+#
+# 用法：
+#   docker compose -f docker-compose.memory.yml up -d
+#   docker compose -f docker-compose.memory.yml down          # 保留数据卷
+#   docker compose -f docker-compose.memory.yml down -v       # 连数据卷一起清空
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: "neo4j/hello-agents-password"
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  qdrant_data:
+  neo4j_data:

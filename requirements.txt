@@ -7,8 +7,8 @@ langchain-openai >= 0.2.0
 # memory/ (ported from HelloAgents hello_agents/memory)
 pydantic >= 2.0.0
 numpy >= 1.24.0
-# optional, only needed if selecting the corresponding storage/embedding backend:
-# neo4j >= 5.0.0
-# qdrant-client >= 1.6.0
+neo4j >= 5.0.0
+qdrant-client >= 1.6.0
+# optional, only needed if selecting the corresponding embedding backend:
 # sentence-transformers
 # dashscope

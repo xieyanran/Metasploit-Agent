@@ -1,8 +1,11 @@
 """
 Central registration point for all built-in Metasploit tools.
 """
+from typing import Optional
+
 from metasploit.client import MetasploitClient
 from core.scope import EngagementScope
+from core.llm import PentestAgentLLM
 from tools.registry import ToolRegistry
 
 from tools.builtin.nmap_scan import NmapScanTool
@@ -24,7 +27,12 @@ from tools.builtin.stop_session import StopSessionTool
 from tools.builtin.memory_tool import MemoryTool
 
 
-def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient, scope: EngagementScope) -> None:
+def register_builtin_tools(
+    registry: ToolRegistry,
+    client: MetasploitClient,
+    scope: EngagementScope,
+    llm: Optional[PentestAgentLLM] = None,
+) -> None:
     """
     Instantiate and register every built-in tool against the given client.
 
@@ -33,6 +41,12 @@ def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient, sco
     agent act on a raw target (scan or execute a module) are scope-checked;
     session/job-management tools act on already-established IDs and are out
     of scope for this check.
+
+    `llm` is optional and currently only used by MemoryTool, to let manually
+    written semantic memories go through SemanticMemoryMaintainer's dedup/
+    contradiction check (see MemoryTool._add_memory). Existing call sites that
+    don't pass it keep working exactly as before — this is additive, not a
+    new hard requirement.
     """
     registry.register_tool(NmapScanTool(client, scope))
     registry.register_tool(ListSessionTool(client))
@@ -53,11 +67,11 @@ def register_builtin_tools(registry: ToolRegistry, client: MetasploitClient, sco
 
     # "memory" 工具此前从未在这里注册，导致 core.agent.Agent._get_memory_extractor()
     # 里的 tool_registry.get_tool("memory") 一直静默返回 None，记忆子系统全程空转。
-    # semantic 记忆当前依赖 Qdrant/Neo4j 且引用了本项目里不存在的
-    # core.database_config 模块，初始化会直接抛异常，因此这里只启用 working/episodic
-    # （两者都是本地 SQLite 存储，已验证可用）。如果连这两种都初始化失败（比如
-    # memory_data 目录不可写），不应该拖垮其余 16 个 Metasploit 工具的注册。
+    # semantic 记忆依赖本地 Qdrant/Neo4j（见 docker-compose.memory.yml + 根目录
+    # README.md「Preparations」），未启动时下面的 try/except 会跳过整个 memory 工具
+    # 的注册而不拖垮其余 16 个 Metasploit 工具——working/episodic 是纯本地 SQLite，
+    # 不受影响，理论上可以单独降级注册，但目前没有实际需求需要这么做。
     try:
-        registry.register_tool(MemoryTool(memory_types=["working", "episodic"]))
+        registry.register_tool(MemoryTool(memory_types=["working", "episodic", "semantic"], llm=llm))
     except Exception as e:
         print(f"⚠️ 警告: 记忆工具 'memory' 初始化失败，跳过注册: {e}")
