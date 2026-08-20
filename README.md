@@ -1,5 +1,8 @@
 # Metasploit Pentest Agent
 
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![lang](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
+
 English | [简体中文](README.zh-CN.md)
 
 An LLM agent that drives real penetration tests through the Metasploit Framework — reconnaissance, threat modeling, vulnerability analysis, exploitation, and post-exploitation — instead of a static scan-and-report script.
@@ -13,57 +16,6 @@ Past the fingerprinting stage, a single service usually matches several candidat
 - **A four-tier memory system** (Working / Episodic / Semantic / Perceptual) carries discovered assets, credentials, and past exploit attempts across a single long-running engagement — real engagements span hours to days, and without it the agent would re-scan and re-try things it already knows.
 - **Every tool call that touches a real target is gated by a human-authored scope guard** (`core/scope.py`): the LLM never decides for itself what's in scope. `scope.json` is a plain JSON file a human maintains; anything not explicitly listed is rejected, and a missing file fails **closed** — nothing is authorized by default. Every check, allowed or denied, is appended to an audit log.
 - The whole thing runs on a **small, purpose-built agent framework** (`core/`, `context/`) rather than a heavyweight commercial one — see [`docs/DESIGN.md`](docs/DESIGN.md) for the reasoning, PEAS task-environment breakdown, and the context-engineering/memory-system design notes behind it.
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Orchestrator["PTES Orchestrator"]
-        direction LR
-        P1["Recon<br/>(Plan-and-Solve)"] --> P2["Threat Modeling"] --> P3["Vulnerability<br/>Analysis"] --> P4["Exploitation"] --> P5["Post-<br/>Exploitation"]
-    end
-    P2 -.->|"same instance,<br/>set_ptes_phase()"| React["PostReconReActAgent<br/>(ReAct loop)"]
-    P3 -.-> React
-    P4 -.-> React
-    P5 -.-> React
-    P1 --> Plan["PlanSolveAgent"]
-
-    Plan --> Core
-    React --> Core
-
-    subgraph Core["Core Agent Layer"]
-        direction LR
-        LLM["LLM interface<br/>(core/llm.py)"]
-        Ctx["Context Engineering<br/>Gather→Select→Structure→Compress"]
-        Mem[("Memory System<br/>Working / Episodic /<br/>Semantic / Perceptual")]
-        LLM --- Ctx --- Mem
-    end
-
-    Core --> Tools["Tool Registry<br/>(tools/builtin/*)"]
-    Tools --> Guard{{"Scope Guard<br/>core/scope.py<br/>fail-closed, human-authored"}}
-    Guard -->|authorized| RPC["Metasploit RPC Client<br/>(metasploit/*)"]
-    Guard -.->|rejected| Audit[("logs/scope_audit.log")]
-    RPC --> MSF[("msfrpcd")]
-    MSF --> Target(["Target host(s)"])
-
-    style Guard fill:#7a2020,color:#fff,stroke:#c0392b,stroke-width:2px
-    style Mem fill:#1f3a5f,color:#fff
-```
-
-```
-firstpentestAgent/
-├── agent/          # PlanSolveAgent (recon) + PostReconReActAgent (threat modeling → post-exploitation)
-├── core/           # Agent base class, LLM interface, message system, lifecycle, config, scope guard
-├── context/        # ContextBuilder: Gather → Select → Structure → Compress
-├── memory/         # 4-tier memory manager: extraction, maintenance, embedding, SQLite/Qdrant/Neo4j stores
-├── metasploit/     # msfrpc client wrapper (core, console, modules, jobs, sessions)
-├── tools/          # Tool base/registry/chain + built-in tools (nmap_scan, run_module, set_option, sessions, jobs, memory...)
-├── docs/           # DESIGN.md, TESTING.md, STATE_MODEL.md, TOOL_INTERFACE.md, threat modeling & pentest framework notes
-├── tests/          # unit (mocked) / integration (live RPC) / e2e (live RPC + live CVE lab)
-└── examples/       # runnable scripts, e.g. examples/run_plan_solve_agent.py
-```
-
-> Full design rationale, trade-offs, and the memory-system deep dive: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Demo
 

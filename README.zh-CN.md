@@ -1,5 +1,8 @@
 # Metasploit Pentest Agent
 
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![lang](https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-blue.svg)](README.zh-CN.md)
+
 [English](README.md) | 简体中文
 
 一个通过 Metasploit Framework 驱动真实渗透测试的 LLM agent —— 涵盖侦察、威胁建模、漏洞分析、漏洞利用与后渗透，而不是一个"扫描-出报告"式的静态脚本。
@@ -13,57 +16,6 @@
 - **四层记忆系统**（工作记忆 / 情景记忆 / 语义记忆 / 感知记忆）在一次长程 engagement 中承载已发现的资产、凭据和过往的利用尝试——真实的 engagement 往往持续数小时到数天，没有这套记忆机制 agent 会不断重复扫描、重复尝试已经知道的东西。
 - **任何一次真正触达目标的工具调用都由人工编写的 scope guard 把关**（`core/scope.py`）：LLM 永远无权自行决定什么在授权范围内。`scope.json` 是一个由人维护的纯 JSON 文件；任何没有明确列出的目标都会被拒绝，文件缺失时**默认拒绝**（fail-closed）——没有任何东西是默认被授权的。每一次检查，无论通过还是拒绝，都会被记入审计日志。
 - 整个系统跑在一套**小型、专门定制的 agent 框架**（`core/`、`context/`）上，而不是某个笨重的商业框架——设计理由、PEAS 任务环境拆解，以及背后的上下文工程/记忆系统设计笔记详见 [`docs/DESIGN.md`](docs/DESIGN.md)。
-
-## 架构
-
-```mermaid
-flowchart TB
-    subgraph Orchestrator["PTES 编排器"]
-        direction LR
-        P1["侦察<br/>(Plan-and-Solve)"] --> P2["威胁建模"] --> P3["漏洞<br/>分析"] --> P4["漏洞利用"] --> P5["后<br/>渗透"]
-    end
-    P2 -.->|"同一实例<br/>set_ptes_phase()"| React["PostReconReActAgent<br/>(ReAct 循环)"]
-    P3 -.-> React
-    P4 -.-> React
-    P5 -.-> React
-    P1 --> Plan["PlanSolveAgent"]
-
-    Plan --> Core
-    React --> Core
-
-    subgraph Core["核心 Agent 层"]
-        direction LR
-        LLM["LLM 接口<br/>(core/llm.py)"]
-        Ctx["上下文工程<br/>Gather→Select→Structure→Compress"]
-        Mem[("记忆系统<br/>工作 / 情景 /<br/>语义 / 感知")]
-        LLM --- Ctx --- Mem
-    end
-
-    Core --> Tools["工具注册表<br/>(tools/builtin/*)"]
-    Tools --> Guard{{"Scope Guard<br/>core/scope.py<br/>默认拒绝、人工授权"}}
-    Guard -->|已授权| RPC["Metasploit RPC 客户端<br/>(metasploit/*)"]
-    Guard -.->|已拒绝| Audit[("logs/scope_audit.log")]
-    RPC --> MSF[("msfrpcd")]
-    MSF --> Target(["目标主机"])
-
-    style Guard fill:#7a2020,color:#fff,stroke:#c0392b,stroke-width:2px
-    style Mem fill:#1f3a5f,color:#fff
-```
-
-```
-firstpentestAgent/
-├── agent/          # PlanSolveAgent（侦察）+ PostReconReActAgent（威胁建模 → 后渗透）
-├── core/           # Agent 基类、LLM 接口、消息系统、生命周期、配置、scope guard
-├── context/        # ContextBuilder：Gather → Select → Structure → Compress
-├── memory/         # 四层记忆管理器：提取、维护、向量化、SQLite/Qdrant/Neo4j 存储
-├── metasploit/     # msfrpc 客户端封装（core、console、modules、jobs、sessions）
-├── tools/          # 工具基类/注册表/链式调用 + 内置工具（nmap_scan、run_module、set_option、sessions、jobs、memory...）
-├── docs/           # DESIGN.md、TESTING.md、STATE_MODEL.md、TOOL_INTERFACE.md、威胁建模与渗透框架笔记
-├── tests/          # 单元测试（mock）/ 集成测试（真实 RPC）/ 端到端测试（真实 RPC + 真实 CVE 靶场）
-└── examples/       # 可运行脚本示例，如 examples/run_plan_solve_agent.py
-```
-
-> 完整设计理由、权衡取舍，以及记忆系统的深度剖析：[`docs/DESIGN.md`](docs/DESIGN.md)。
 
 ## Demo
 
