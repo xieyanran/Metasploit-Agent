@@ -25,17 +25,19 @@ from typing import Any, Dict, List, Optional
 
 from core.llm import PentestAgentLLM
 
+from .enums import Outcome
 from .manager import MemoryManager
 from .maintenance import SemanticMemoryMaintainer
 
 logger = logging.getLogger(__name__)
 
-# 与 MemoryManager.EPISODIC_EVENT_TYPES / outcome 枚举对齐，用于校验LLM返回的分类是否合法
+# 与 MemoryManager.EPISODIC_EVENT_TYPES 对齐，用于校验LLM返回的分类是否合法
 _EPISODIC_EVENT_TYPES = (
     "asset_discovery", "credential_found", "exploit_attempt", "recon_negative",
     "defense_observed", "privesc_lateral_move", "osint_finding", "scope_directive",
 )
-_EPISODIC_OUTCOMES = ("success", "tech_fail", "op_fail", "negative")
+# outcome 的合法取值以 Outcome 枚举为唯一来源，避免这里再维护一份容易漂移的副本
+_EPISODIC_OUTCOMES = tuple(o.value for o in Outcome)
 
 _CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 

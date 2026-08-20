@@ -24,6 +24,7 @@ from .storage.document_store import DocumentStore, SQLiteDocumentStore
 
 # Base classes and utilities
 from .base import MemoryItem, MemoryConfig, BaseMemory
+from .enums import Outcome
 
 __all__ = [
     # Core Layer
@@ -42,5 +43,6 @@ __all__ = [
     # Base
     "MemoryItem",
     "MemoryConfig",
-    "BaseMemory"
+    "BaseMemory",
+    "Outcome",
 ]

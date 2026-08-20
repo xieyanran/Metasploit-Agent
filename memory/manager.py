@@ -10,6 +10,7 @@ import uuid
 import logging
 
 from .base import MemoryItem, MemoryConfig
+from .enums import Outcome
 from .types.working import WorkingMemory
 from .types.episodic import EpisodicMemory
 from .types.semantic import SemanticMemory
@@ -295,20 +296,29 @@ class MemoryManager:
         "tool_best_practice", "evasion_technique", "pattern_insight",
     }
 
-    # 通用层字段的合法取值，对应 DESIGN.md 的 MetaData Schema；只做提醒性校验（记日志），
-    # 不阻断写入——调用方传了不认识的值大概率是拼写问题，而不该让整条记忆写入失败
+    # 通用层字段的合法取值，对应 DESIGN.md 的 MetaData Schema
+    # phase 仍是提醒性校验（记日志，不阻断）——调用方传了不认识的值大概率是拼写问题，
+    # 不该让整条记忆写入失败
     VALID_PHASES = {"recon", "vuln_analysis", "exploitation", "post_exploitation"}
-    VALID_OUTCOMES = {"success", "tech_fail", "op_fail", "negative"}
+    # outcome 收紧为 Outcome 枚举（见 memory/enums.py）并强制校验：它是区分
+    # "技术性失败"与"操作性失败"的关键字段，传错值不能只是warning了事，
+    # 否则一次RPC超时之类的操作性失败可能被静默记成"该手法对此环境无效"的结论
+    VALID_OUTCOMES = {o.value for o in Outcome}
 
     def _validate_common_metadata(self, metadata: Dict[str, Any]) -> None:
-        """校验 phase/outcome 是否落在 MetaData Schema 约定的枚举内（仅告警）"""
+        """校验 phase/outcome 是否落在 MetaData Schema 约定的枚举内
+
+        phase 不合法仅告警；outcome 不合法直接拒绝写入（见上方注释）。
+        """
         phase = metadata.get("phase")
         if phase is not None and phase not in self.VALID_PHASES:
             logger.warning(f"phase={phase!r} 不在约定枚举 {self.VALID_PHASES} 内，请检查调用方传参")
 
         outcome = metadata.get("outcome")
         if outcome is not None and outcome not in self.VALID_OUTCOMES:
-            logger.warning(f"outcome={outcome!r} 不在约定枚举 {self.VALID_OUTCOMES} 内，请检查调用方传参")
+            raise ValueError(
+                f"outcome={outcome!r} 不是合法枚举值，必须是 {sorted(self.VALID_OUTCOMES)} 之一"
+            )
 
     def _classify_memory_type(self, _content: str, metadata: Optional[Dict[str, Any]]) -> str:
         """基于结构化字段判定记忆类型
