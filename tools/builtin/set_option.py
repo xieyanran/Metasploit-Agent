@@ -26,7 +26,7 @@ class SetOptionTool(BaseTool):
     def get_parameters(self) -> List[ToolParameter]:
         return [
             ToolParameter(name="module_type", type="string", description="Metasploit module type (e.g. exploit, auxiliary, post)."),
-            ToolParameter(name="module_name", type="string", description="Metasploit module name."),
+            ToolParameter(name="module_name", type="string", description="Full Metasploit module path as returned by search_module's 'fullname' field (e.g. exploit/multi/http/struts2_content_type_ognl) — must include the exploit/multi/... type prefix, not just the short module name."),
             ToolParameter(name="options", type="object", description="Options to set on the module, as a dict of option name to value."),
         ]
 
