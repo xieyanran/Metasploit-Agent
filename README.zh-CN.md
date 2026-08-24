@@ -1,5 +1,6 @@
 # Metasploit Pentest Agent
 
+[![Tests](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![lang](https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-blue.svg)](README.zh-CN.md)
 
