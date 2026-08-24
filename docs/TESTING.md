@@ -173,4 +173,4 @@ Beyond "does the tool work," a few tests exist specifically to validate the safe
 - `memory/` subsystem (retrieval scoring, forgetting/consolidation) has no dedicated unit tests yet — it's pure logic and well-suited to the same mocking approach, just not part of this pass.
 - No PTES "Reporting" stage exists yet (see `DESIGN.md`), so the e2e test proves exploitation, not report generation.
 - Session-management tools (`execute_session`, `shell_upgrade`, `stop_session`, etc.) are only scope-checked indirectly, through the assumption that the session they operate on could only exist because `run_module` already passed the scope gate to create it. They don't re-validate scope themselves.
-- No CI workflow runs any of this automatically yet — today it's `pytest` run locally. Wiring Layer 1 into GitHub Actions is the natural next step, since it has zero external dependencies.
+- Layer 1 (unit) runs automatically on every push/PR via [`.github/workflows/tests.yml`](../.github/workflows/tests.yml). Layers 2 and 3 still require a live `msfrpcd` and aren't wired into CI.
