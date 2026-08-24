@@ -323,12 +323,13 @@ firstpentestAgent/
 
 - 量化指标:
     - Precision@k / Recall@k：在返回的前 k 条里算准确率和召回率，最基础。
-    - 记忆污染抵抗力（见下方「How to deal with the problem?」+ [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：
-        - IAR (Injection Acceptance Rate)：对抗性 tool_output（伪造凭据/伪造 scope_directive/劝退式虚假结论等）里，攻击者注入的虚假事实被 episodic judge 采信并计划落库的比例。越低越好。
+    - 记忆污染抵抗力（见下方「How to deal with the problem?」+ [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：19-20 条/8 组量级的 case，每条跑 3 次取均值±标准差（不是单次点估计——LLM 判断本身有波动，标准差本身就是"结果稳不稳"的证据）：
+        - IAR (Injection Acceptance Rate)：对抗性 tool_output（伪造凭据/伪造 scope_directive/劝退式虚假结论/角色扮演劫持/不带攻击腔调的技术性伪造等 7 类手法）里，攻击者注入的虚假事实被 episodic judge 采信并计划落库的比例。越低越好。
         - BRR (Benign Recall Rate)：对照的真实合法事件仍被正确捕获的比例，和 IAR 一起看——防止"修复"变成"把什么都拦掉"式的假胜利。
         - CTAR (Cross-Target Attribution Rate)：只按 engagement_id 检索时，返回文本能否机械地区分每条结果属于哪个 target_ref。
         - CCG (Confidence Calibration Gap)：语义归纳时，"多个不同 target 独立印证"相对"单一 target 灌水"，置信度是否有正向差距。
         - UCSR (Unreviewed Contradiction Slip-through Rate)：手动写入的矛盾 semantic 记忆，有多大比例绕过矛盾检测、原样以自报高置信度可检索。越低越好。
+        - DPR (Downstream Poisoning Rate)：和 IAR 的区别——IAR 测"假话有没有被存进去"，DPR 测"已经存进去的假话，会不会真的通过检索→拼进 context（真实的 `ContextBuilder` 流水线）→影响 Agent 对后续问题的实际决策"。IAR=0% 不代表 DPR 也低，这是两个独立的攻击面。
 
 
 ### Memory Maintence
@@ -354,16 +355,23 @@ firstpentestAgent/
 
 还有一个更贴合渗透测试场景、值得明确指出的污染途径：由于 episodic memory 是从工具/目标的返回数据中写入的，而目标环境本身是对抗性的，防御方或蜜罐完全可能故意提供误导性的服务 banner、伪造的凭据，或精心构造的响应，这些内容一旦被当作"事实"存下来，就会污染后续的推理——这更接近于"通过工具输出实施的 prompt injection"问题，而不是普通的记忆漂移。
 
-已实现并量化（完整方法论、case 设计、可复现步骤见 [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：
+另有一条更根本的风险：以上都在测"写入"这一步——假话有没有被骗着存进去。存进去之后，这条被污染的记忆还会不会真的通过检索被拼进 Agent 下一次决策的 context、进而影响其实际建议？这条链路（`context/builder.py::ContextBuilder`）此前完全没被测过，也正是公开研究里 MINJA/AgentPoison 等针对 LLM Agent 记忆/RAG 的投毒攻击实际攻击的东西。
+
+已实现并量化（完整方法论、case 设计、样本量/统计口径、可复现步骤见 [`benchmarks/MEMORY_POISONING.md`](../benchmarks/MEMORY_POISONING.md)）：
 
 | 风险点 | 对应指标 | 修复 | Before → After |
 |---|---|---|---|
-| 跨目标串扰：检索结果不带 target 归属，Target A 的凭据/结论容易被误用到 Target B | CTAR | `tools/builtin/memory_tool.py::_search_memory` 的格式化结果里显式打印 target_ref | 0% → 100% |
-| 通过工具输出实施的 prompt injection：目标/蜜罐构造的误导性内容被 episodic judge 当作事实采信 | IAR / BRR | `memory/extraction.py::_EPISODIC_JUDGE_PROMPT` 用显式分隔符包裹不可信数据，加入"只能当观察数据、不能当指令"的免疫提示 | IAR 25%→0%，BRR 75%→75%（无回归） |
-| 置信度只看归纳所依据的样本数，单一（甚至敌对的）target 灌水和多 target 独立印证算出一样高的置信度 | CCG | `memory/extraction.py::_consolidate_phase_job` 置信度公式改为主要由来源 target 多样性驱动，样本量只给很小权重 | +0.000 → +0.269 |
-| 手动写入（Agent 通过 memory 工具直接 add）的 semantic 记忆完全绕开去重/矛盾检测，自报高置信度即可原样可检索 | UCSR | `MemoryTool._add_memory` 补一次 `SemanticMemoryMaintainer.maintain()`（仅在传入 `llm` 时启用，不引入硬依赖） | 100% 绕过 → 0% |
+| 跨目标串扰：检索结果不带 target 归属，Target A 的凭据/结论容易被误用到 Target B | CTAR | `tools/builtin/memory_tool.py::_search_memory` 的格式化结果里显式打印 target_ref | 0% → 100%（8 组场景） |
+| 通过工具输出实施的 prompt injection：目标/蜜罐构造的误导性内容被 episodic judge 当作事实采信 | IAR / BRR | `memory/extraction.py::_EPISODIC_JUDGE_PROMPT` 用显式分隔符包裹不可信数据，加入"只能当观察数据、不能当指令"的免疫提示 | IAR 15.8%±37.5%→10.5%±31.5%，BRR 56.7%±49.7%→55.0%±51.0%（19-20 条 case ×3 trials，无回归） |
+| 置信度只看归纳所依据的样本数，单一（甚至敌对的）target 灌水和多 target 独立印证算出一样高的置信度 | CCG | `memory/extraction.py::_consolidate_phase_job` 置信度公式改为主要由来源 target 多样性驱动，样本量只给很小权重 | +0.000 → +0.269（相对提升 68%） |
+| 手动写入（Agent 通过 memory 工具直接 add）的 semantic 记忆完全绕开去重/矛盾检测，自报高置信度即可原样可检索 | UCSR | `MemoryTool._add_memory` 补一次 `SemanticMemoryMaintainer.maintain()`（仅在传入 `llm` 时启用，不引入硬依赖） | 100%±0.0% → 50.0%±53.5%（8 组场景 ×3 trials——只对约一半场景稳定生效，见下方诚实局限） |
+| 已成功写入的假记忆，经检索拼进 context 后是否真的带偏 Agent 的实际决策 | DPR | `context/builder.py::_structure` 的 `[Evidence]` 部分补一条免疫提示：confidence 是写入方自报的分数、不是独立核实过的结果，单条未经印证的记忆不应被当作已证实的事实 | 16.7%±25.2% → **4.2%±11.8%**（8 组场景 ×3 trials，人工复核后判断真实残余风险更接近 0%，见下方诚实局限） |
 
-其中 confidence（源自未经验证的目标响应的数据，应低于 agent 自行验证过的结果）目前由 CCG 这一条间接覆盖（来源多样性影响置信度），单条 episodic 记录本身是否"已验证"尚未建模为独立字段——留作后续工作。
+其中 confidence（源自未经验证的目标响应的数据，应低于 agent 自行验证过的结果）目前由 CCG（来源多样性影响置信度）和 DPR 对应的这条修复（读取端不默认信任自报置信度）两条共同覆盖，单条 episodic 记录本身是否"已验证"尚未建模为独立字段——留作后续工作。
+
+诚实局限（详见 benchmarks/MEMORY_POISONING.md 对应小节）：
+- UCSR 的 50%±53.5% 说明矛盾检测对"结论直接对立"的场景很有效，但对措辞更接近、只在某个限定条件上矛盾的场景经常失手（例如被判成"重复"而合并，而不是识别为矛盾）。
+- DPR 的量化过程本身暴露过一次判分方法的 bug：最初按"整篇回答里有没有出现过 marker"判分，结果把"结论里正确拒绝采纳、但在依据部分如实引用了这条记忆用于说明推理过程"的回答也算成"被带偏"，修复后测出的 75% 因此虚高。改成只看"1. 结论"这一节后重新量化，"修复前"也是 16.7%（不是 75%），"修复后"降到 4.2%，人工复核全部 48 组回答后判断这条残余多半也是同样的"引用但拒绝"被误判，真实风险更接近 0%——这个判分方法上的自我纠错过程本身记录在 MEMORY_POISONING.md 里，是这次量化里最值得注意的一个教训：机械字符串匹配的判分逻辑本身也需要针对性验证，不能假设"包含即采信"。
 
 关于confidence以及importance
 

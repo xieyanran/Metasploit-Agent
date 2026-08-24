@@ -119,7 +119,18 @@ The demo above is one run against one target. [`benchmarks/exploit_benchmark.py`
 | spring-cve-2022-22963 | CVE-2022-22963 (Spring SpEL) | ❌ 526.6s / 11 calls | ✅ 560.5s / 14 calls |
 | **Success rate** | | **1/3 (33%)** | **3/3 (100%)** |
 
-The first run (1/3) surfaced a real, traceable bug, not model flakiness: under the 8-step vulnerability-analysis budget, the phase sometimes hit its cap without ever calling `Finish`, and the fallback path handed the raw message history back to the LLM with no framing — producing a genuinely **empty** conclusion for the exploitation phase to build on. The fix ([`agent/post_recon_react_agent.py`](agent/post_recon_react_agent.py)) makes the step-budget fallback explicitly ask the model to converge on its best answer now (and marks `⚠️ REPLAN_NEEDED` instead of staying silent if it still can't). Re-running afterward: 3/3. Full methodology, the original failure-mode analysis, and an honest nuance about *which* CVE the s2-057 run actually exploited are in [`benchmarks/README.md`](benchmarks/README.md).
+The first run (1/3) surfaced a real, traceable bug, not model flakiness: under the 8-step vulnerability-analysis budget, the phase sometimes hit its cap without ever calling `Finish`, and the fallback path handed the raw message history back to the LLM with no framing — producing a genuinely **empty** conclusion for the exploitation phase to build on. The fix ([`agent/post_recon_react_agent.py`](agent/post_recon_react_agent.py)) makes the step-budget fallback explicitly ask the model to converge on its best answer now (and marks `⚠️ REPLAN_NEEDED` instead of staying silent if it still can't). Full methodology, the original failure-mode analysis, and an honest nuance about *which* CVE the s2-057 run actually exploited are in [`benchmarks/README.md`](benchmarks/README.md).
+
+### Does the multi-turn search actually help, or would a single blind guess do?
+
+The harness also runs a **baseline**: the same fingerprint handed to the model in one shot, zero tools, no `search_module`/`get_module_info` verification — just its parametric knowledge of "what Metasploit module handles this CVE." The most recent clean comparison run, on these same three well-known CVEs:
+
+| | s2-045 | s2-057 | spring-cve-2022-22963 | Success rate |
+|---|---|---|---|---|
+| **Agent** (multi-turn, tools) | ✅ 118.2s / 18 calls | ❌ 109.1s / 16 calls | ✅ 91.5s / 11 calls | 2/3 |
+| **Baseline** (single-shot, no tools) | ✅ 6.9s / 2 calls | ✅ 2.8s / 2 calls | ✅ 4.5s / 2 calls | 3/3 |
+
+An honest result, not a flattering one: on CVEs this famous, the model's raw training-data recall already contains the exact correct module name, so multi-turn search added latency and tool calls without adding accuracy — and on s2-057 the agent actually talked itself into the wrong module after 16 calls, something the one-shot baseline didn't do. This is a real regression from the earlier 3/3-after-fix run above, not a different benchmark; re-running `exploit_benchmark.py` is how to check whether it reproduces. The benchmark exists precisely to catch cases like this rather than assume the agentic loop always beats a blind guess — for CVEs obscure or ambiguous enough that parametric recall isn't reliable (where multi-turn search should actually earn its keep), the harness has since been extended with 7 more targets spanning JNDI injection, deserialization, and non-Java/PHP stacks (see `BASELINE_PROMPT_TEMPLATE` and the extended `TARGETS` list in [`benchmarks/exploit_benchmark.py`](benchmarks/exploit_benchmark.py) — results from that larger set aren't final yet).
 
 ## Preparations
 
