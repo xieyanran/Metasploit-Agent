@@ -1,4 +1,8 @@
+<div align="center">
+
 # Metasploit Pentest Agent
+
+**An LLM agent that drives real penetration tests through the Metasploit Framework — reconnaissance, threat modeling, vulnerability analysis, exploitation, and post-exploitation — instead of a static scan-and-report script.**
 
 [![Tests](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
@@ -6,17 +10,43 @@
 
 English | [简体中文](README.zh-CN.md)
 
-An LLM agent that drives real penetration tests through the Metasploit Framework — reconnaissance, threat modeling, vulnerability analysis, exploitation, and post-exploitation — instead of a static scan-and-report script.
+<img src="assets/demo-terminal.svg" alt="Real pytest run: scope guard blocks exploitation until authorized, then dispatches a real CVE-2017-5638 exploit against a live vulhub container" width="820">
 
-## Why an agent, not a script
+</div>
 
-Past the fingerprinting stage, a single service usually matches several candidate exploit modules, and there's no fixed rule for ranking them or deciding when to abandon a failing approach — that judgment call is exactly what a static if/else pipeline can't encode. This project follows the industry-standard [PTES methodology](https://en.wikipedia.org/wiki/Penetration_test) (Intelligence Gathering → Threat Modeling / Vulnerability Analysis → Exploitation → Post-Exploitation), but hands the moment-to-moment judgment calls to an LLM reasoning core instead of hard-coded branches:
+## Features
 
-- **Reconnaissance is Plan-and-Solve.** It's the structured phase — the agent drafts a full task list up front (`agent/reconnaissance_planandsolve_agent.py`), then executes it step by step.
-- **Everything after recon is ReAct.** Threat Modeling, Vulnerability Analysis, Exploitation, and Post-Exploitation reuse a *single* `PostReconReActAgent` instance across all four phases — the orchestrator calls `set_ptes_phase()` at each boundary and the agent re-derives a phase-specific system prompt from `state.ptes_phase` on every `run()`. A Thought → Action → Observation loop fits this part well, because each step's outcome genuinely changes what the next move should be.
-- **A four-tier memory system** (Working / Episodic / Semantic / Perceptual) carries discovered assets, credentials, and past exploit attempts across a single long-running engagement — real engagements span hours to days, and without it the agent would re-scan and re-try things it already knows.
-- **Every tool call that touches a real target is gated by a human-authored scope guard** (`core/scope.py`): the LLM never decides for itself what's in scope. `scope.json` is a plain JSON file a human maintains; anything not explicitly listed is rejected, and a missing file fails **closed** — nothing is authorized by default. Every check, allowed or denied, is appended to an audit log.
-- The whole thing runs on a **small, purpose-built agent framework** (`core/`, `context/`) rather than a heavyweight commercial one — see [`docs/DESIGN.md`](docs/DESIGN.md) for the reasoning, PEAS task-environment breakdown, and the context-engineering/memory-system design notes behind it.
+- **PTES-driven phases** — Reconnaissance (Plan-and-Solve) → Threat Modeling → Vulnerability Analysis → Exploitation → Post-Exploitation (ReAct), not a fixed if/else pipeline
+- **Four-tier memory** (Working / Episodic / Semantic / Perceptual) so a multi-hour engagement doesn't re-scan or re-try what it already knows
+- **Fail-closed scope guard** — every tool call that touches a real target is checked against a human-maintained `scope.json`; anything unlisted is rejected, and a missing file authorizes nothing
+- **Quantified, reproducible benchmarks** — multi-CVE exploit success rate and a memory-poisoning resistance suite, not a single cherry-picked demo run
+- **Small, purpose-built agent framework** (`core/`, `context/`) instead of a heavyweight commercial one — see [`docs/DESIGN.md`](docs/DESIGN.md)
+
+## Quick Start
+
+1. [Install Metasploit](https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html), then start the RPC server from inside `msfconsole` (this doesn't persist across restarts — it's a plugin, not a daemon):
+
+    ```
+    load msgrpc ServerHost=127.0.0.1 ServerPort=Portnum User=username Pass=password SSL=false
+    ```
+
+2. Authorize a target — anything not listed here is rejected before any tool touches the network (`scope.json` is gitignored on purpose):
+
+    ```bash
+    cp scope.example.json scope.json   # then edit it
+    ```
+
+3. Configure `.env`: `LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL` and `MSF_RPC_HOST` / `MSF_RPC_PORT` / `MSF_RPC_USERNAME` / `MSF_RPC_PASSWORD`.
+
+4. Run the recon example against an authorized target:
+
+    ```bash
+    python examples/run_plan_solve_agent.py <authorized target>
+    ```
+
+Optional, only for semantic memory (and `benchmarks/memory_poisoning_benchmark.py`'s calibration/contradiction metrics): `docker compose -f docker-compose.memory.yml up -d` starts a local Qdrant + Neo4j pair with defaults matching `core/database_config.py` out of the box.
+
+See [Safety](#safety) before pointing this at anything.
 
 ## Demo
 
@@ -131,20 +161,6 @@ The harness also runs a **baseline**: the same fingerprint handed to the model i
 | **Baseline** (single-shot, no tools) | ✅ 6.9s / 2 calls | ✅ 2.8s / 2 calls | ✅ 4.5s / 2 calls | 3/3 |
 
 An honest result, not a flattering one: on CVEs this famous, the model's raw training-data recall already contains the exact correct module name, so multi-turn search added latency and tool calls without adding accuracy — and on s2-057 the agent actually talked itself into the wrong module after 16 calls, something the one-shot baseline didn't do. This is a real regression from the earlier 3/3-after-fix run above, not a different benchmark; re-running `exploit_benchmark.py` is how to check whether it reproduces. The benchmark exists precisely to catch cases like this rather than assume the agentic loop always beats a blind guess — for CVEs obscure or ambiguous enough that parametric recall isn't reliable (where multi-turn search should actually earn its keep), the harness has since been extended with 6 more targets spanning JNDI injection, deserialization, and non-Java/PHP stacks (see `BASELINE_PROMPT_TEMPLATE` and the extended `TARGETS` list in [`benchmarks/exploit_benchmark.py`](benchmarks/exploit_benchmark.py) — results from that larger set aren't final yet).
-
-## Preparations
-
-- Install Metasploit: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html
-- Start the RPC server (this doesn't persist across Metasploit restarts — a msfconsole plugin, not a daemon):
-
-    ```
-    load msgrpc ServerHost=127.0.0.1 ServerPort=Portnum User=username Pass=password SSL=false
-    ```
-
-- Copy `scope.example.json` → `scope.json` and list only targets you have explicit authorization to test. Anything not listed is rejected before any tool touches the network — this file is gitignored on purpose.
-- Configure `.env`: `LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL` and `MSF_RPC_HOST` / `MSF_RPC_PORT` / `MSF_RPC_USERNAME` / `MSF_RPC_PASSWORD`.
-- Run the recon example: `python examples/run_plan_solve_agent.py <authorized target>`
-- Optional, only needed for semantic memory (and `benchmarks/memory_poisoning_benchmark.py`'s calibration/contradiction metrics): `docker compose -f docker-compose.memory.yml up -d` starts a local Qdrant + Neo4j pair with defaults matching `core/database_config.py` out of the box.
 
 ## Safety
 

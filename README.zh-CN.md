@@ -1,4 +1,8 @@
+<div align="center">
+
 # Metasploit Pentest Agent
+
+**一个通过 Metasploit Framework 驱动真实渗透测试的 LLM agent —— 涵盖侦察、威胁建模、漏洞分析、漏洞利用与后渗透，而不是一个"扫描-出报告"式的静态脚本。**
 
 [![Tests](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/xieyanran/Metasploit-Agent/actions/workflows/tests.yml)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
@@ -6,17 +10,43 @@
 
 [English](README.md) | 简体中文
 
-一个通过 Metasploit Framework 驱动真实渗透测试的 LLM agent —— 涵盖侦察、威胁建模、漏洞分析、漏洞利用与后渗透，而不是一个"扫描-出报告"式的静态脚本。
+<img src="assets/demo-terminal.svg" alt="真实 pytest 运行记录：scope guard 在未授权前拦截漏洞利用，授权后针对 CVE-2017-5638 对真实 vulhub 容器发起真实攻击" width="820">
 
-## 为什么用 agent，而不是脚本
+</div>
 
-过了指纹识别阶段，一个服务通常会匹配到好几个候选利用模块，而"该按什么顺序尝试、什么时候该放弃某条失败路径"这类判断没有固定规则可循——这恰恰是静态 if/else 流水线编码不了的东西。本项目遵循业界标准的 [PTES 方法论](https://en.wikipedia.org/wiki/Penetration_test)（情报收集 → 威胁建模 / 漏洞分析 → 漏洞利用 → 后渗透），但把这些临场判断交给 LLM 推理核心，而不是写死的分支逻辑：
+## 核心特性
 
-- **侦察阶段用 Plan-and-Solve。** 这是结构化的阶段——agent 一开始就拟出完整的任务清单（`agent/reconnaissance_planandsolve_agent.py`），然后逐步执行。
-- **侦察之后的全部阶段用 ReAct。** 威胁建模、漏洞分析、漏洞利用、后渗透这四个阶段复用**同一个** `PostReconReActAgent` 实例——编排器在每个阶段边界调用 `set_ptes_phase()`，agent 在每次 `run()` 时都会根据 `state.ptes_phase` 重新生成该阶段专属的 system prompt。这部分很适合用 Thought → Action → Observation 循环，因为每一步的结果确实会真正改变下一步该做什么。
-- **四层记忆系统**（工作记忆 / 情景记忆 / 语义记忆 / 感知记忆）在一次长程 engagement 中承载已发现的资产、凭据和过往的利用尝试——真实的 engagement 往往持续数小时到数天，没有这套记忆机制 agent 会不断重复扫描、重复尝试已经知道的东西。
-- **任何一次真正触达目标的工具调用都由人工编写的 scope guard 把关**（`core/scope.py`）：LLM 永远无权自行决定什么在授权范围内。`scope.json` 是一个由人维护的纯 JSON 文件；任何没有明确列出的目标都会被拒绝，文件缺失时**默认拒绝**（fail-closed）——没有任何东西是默认被授权的。每一次检查，无论通过还是拒绝，都会被记入审计日志。
-- 整个系统跑在一套**小型、专门定制的 agent 框架**（`core/`、`context/`）上，而不是某个笨重的商业框架——设计理由、PEAS 任务环境拆解，以及背后的上下文工程/记忆系统设计笔记详见 [`docs/DESIGN.md`](docs/DESIGN.md)。
+- **PTES 驱动的阶段划分** —— 侦察（Plan-and-Solve）→ 威胁建模 → 漏洞分析 → 漏洞利用 → 后渗透（ReAct），而不是写死的 if/else 流水线
+- **四层记忆系统**（工作记忆 / 情景记忆 / 语义记忆 / 感知记忆），让持续数小时的 engagement 不会重复扫描、重复尝试已知的东西
+- **默认拒绝的 scope guard** —— 任何触达真实目标的工具调用都要对照人工维护的 `scope.json`；未列出的一律拒绝，文件缺失时不授权任何东西
+- **量化、可复现的 benchmark** —— 多 CVE 利用成功率、记忆投毒抵抗力测试套件，而不是单挑一次好看的 demo
+- **小型、专门定制的 agent 框架**（`core/`、`context/`），而不是某个笨重的商业框架——详见 [`docs/DESIGN.md`](docs/DESIGN.md)
+
+## 快速开始
+
+1. [安装 Metasploit](https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html)，然后在 `msfconsole` 里启动 RPC 服务器（这个服务不会在 Metasploit 重启后自动保留——它是一个插件，不是常驻守护进程）：
+
+    ```
+    load msgrpc ServerHost=127.0.0.1 ServerPort=Portnum User=username Pass=password SSL=false
+    ```
+
+2. 授权一个目标——任何未列出的目标都会在任何工具触碰网络之前被拒绝（`scope.json` 被特意加入了 `.gitignore`）：
+
+    ```bash
+    cp scope.example.json scope.json   # 然后编辑它
+    ```
+
+3. 配置 `.env`：`LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL` 以及 `MSF_RPC_HOST` / `MSF_RPC_PORT` / `MSF_RPC_USERNAME` / `MSF_RPC_PASSWORD`。
+
+4. 针对一个已授权的目标运行侦察示例：
+
+    ```bash
+    python examples/run_plan_solve_agent.py <已授权的目标>
+    ```
+
+可选，仅在需要语义记忆（以及 `benchmarks/memory_poisoning_benchmark.py` 的校准/矛盾检测指标）时才需要：`docker compose -f docker-compose.memory.yml up -d` 会启动一套本地 Qdrant + Neo4j，默认配置与 `core/database_config.py` 开箱即用。
+
+动手之前请先看[安全须知](#安全须知)。
 
 ## Demo
 
@@ -119,19 +149,6 @@ tests/tool_tests/test_run_module.py::test_run_module_mock_exploit_blocked_withou
 | spring-cve-2022-22963 | CVE-2022-22963 (Spring SpEL) | ❌ | 526.6s | 11 |
 
 **3 个目标中成功 1 个（端到端）**，步骤预算为 8+10 步。这是如实报告的基线数据，没有事后调优——两次失败共享同一个已确诊、可修复的原因（漏洞分析阶段在还在比较候选模块时就耗尽了步骤预算，从未给漏洞利用阶段一个明确的交接结果），而不是能力上的缺陷。完整方法论、失败模式分析，以及如何复现或用更多目标扩展测试，见 [`benchmarks/README.md`](benchmarks/README.md)。
-
-## 准备工作
-
-- 安装 Metasploit：https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html
-- 启动 RPC 服务器（这个服务不会在 Metasploit 重启后自动保留——它是一个 msfconsole 插件，不是常驻守护进程）：
-
-    ```
-    load msgrpc ServerHost=127.0.0.1 ServerPort=Portnum User=username Pass=password SSL=false
-    ```
-
-- 把 `scope.example.json` 复制成 `scope.json`，只列出你已获得明确授权测试的目标。任何未列出的目标都会在任何工具触碰网络之前被拒绝——这个文件被特意加入了 `.gitignore`。
-- 配置 `.env`：`LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL` 以及 `MSF_RPC_HOST` / `MSF_RPC_PORT` / `MSF_RPC_USERNAME` / `MSF_RPC_PASSWORD`。
-- 运行侦察示例：`python examples/run_plan_solve_agent.py <已授权的目标>`
 
 ## 安全须知
 

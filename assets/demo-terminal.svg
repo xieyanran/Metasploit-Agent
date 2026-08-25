@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="300" viewBox="0 0 820 300" font-family="SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+  <rect x="0" y="0" width="820" height="300" rx="10" fill="#0d1117"/>
+  <rect x="0" y="0" width="820" height="36" rx="10" fill="#161b22"/>
+  <rect x="0" y="26" width="820" height="10" fill="#161b22"/>
+  <circle cx="22" cy="18" r="6" fill="#ff5f56"/>
+  <circle cx="42" cy="18" r="6" fill="#ffbd2e"/>
+  <circle cx="62" cy="18" r="6" fill="#27c93f"/>
+  <text x="410" y="23" font-size="12" fill="#8b949e" text-anchor="middle">struts2 s2-045 — real msfrpcd, real vulhub container, no mocks</text>
+
+  <text x="24" y="76" font-size="13" fill="#c9d1d9" xml:space="preserve">$ pytest tests/e2e/test_struts2_exploit.py -v -m e2e</text>
+
+  <text x="24" y="124" font-size="13" fill="#c9d1d9" xml:space="preserve">tests/e2e/test_struts2_exploit.py::</text>
+  <text x="24" y="148" font-size="13" xml:space="preserve"><tspan fill="#c9d1d9">  test_exploit_blocked_when_target_not_authorized_for_exploit </tspan><tspan fill="#3fb950" font-weight="bold">PASSED</tspan><tspan fill="#8b949e"> [ 50%]</tspan></text>
+
+  <text x="24" y="184" font-size="13" fill="#c9d1d9" xml:space="preserve">tests/e2e/test_struts2_exploit.py::</text>
+  <text x="24" y="208" font-size="13" xml:space="preserve"><tspan fill="#c9d1d9">  test_exploit_dispatched_against_real_vulnerable_target_when_authorized </tspan><tspan fill="#3fb950" font-weight="bold">PASSED</tspan><tspan fill="#8b949e"> [100%]</tspan></text>
+
+  <text x="24" y="248" font-size="13" fill="#3fb950" xml:space="preserve">========================= 2 passed, 1 warning in 3.60s =========================</text>
+
+  <text x="24" y="280" font-size="12" fill="#6e7681" xml:space="preserve">scope guard blocks until allow_exploit: true, then dispatches for real</text>
+</svg>
