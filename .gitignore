@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+.venv/
 .DS_Store
 memory.db
 .claude
@@ -8,3 +9,4 @@ scope.json
 logs/
 lab/
 docs/
+logs/
